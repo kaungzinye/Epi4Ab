@@ -1,0 +1,34 @@
+# Cursor AI Rules for Epi4Ab Project on Leonardo HPC
+
+## HPC System Context
+This project runs on Leonardo HPC (distributed supercomputing system at CINECA).
+
+### System-Specific Commands
+- Use `module load` to load software modules (e.g., `module load python/3.11.7`)
+- SLURM job submission: Use `sbatch` or `srun` for jobs
+- Python environments: Activate with `source venv/bin/activate` (not conda activate)
+- File paths:
+  - Work: `/leonardo_work/AIFAC_F01_302/`
+  - Scratch (fast): `/leonardo_scratch/fast/AIFAC_F01_302/`
+  - Scratch (large): `/leonardo_scratch/large/userexternal/knaung00/`
+  - Home: `/leonardo/home/userexternal/knaung00/`
+
+### Command Execution Differences
+- Always use `bash -lc` wrapper for complex commands
+- Check module availability before assuming tools exist: `module avail`
+- Some tools may require SLURM job submission (not interactive execution)
+- Network access may be limited (affects web API calls)
+- Use absolute paths when possible (multiple workspace roots)
+
+### Testing and Debugging
+- Test antibody detection on problematic PDBs: 3N85, 6B0N
+- Verify all three labels (0, 1, 2) are generated
+- Check label distribution using inspect_labels.py
+- Log antibody detection results for debugging
+
+### Project Structure
+- Data processing: `data_processing/epi4ab_pipeline.py`
+- Model evaluation: `interface_prediction/model/testing_function.py`
+- SLURM scripts: `slurm/*.sbatch`
+- Processed data: `/leonardo_scratch/fast/AIFAC_F01_302/epi4ab/processed/`
+

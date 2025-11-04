@@ -78,8 +78,8 @@ def batch_list(pdbList, logging, featureNameDict={}, batchType=None, pretrained_
         # Edge
         edge = torch.tensor(edgeIndex.to_numpy().T)
         # Attribute
-        attribute = torch.tensor(edgeAttribute.to_numpy().reshape(-1), dtype = torch.float)
-        attributeCharge = torch.tensor(edgeCharge.to_numpy().reshape(-1), dtype = torch.int)
+        attribute = torch.tensor(edgeAttribute['dist'].to_numpy().reshape(-1), dtype = torch.float)
+        attributeCharge = torch.tensor(edgeCharge['charge'].to_numpy().reshape(-1), dtype = torch.int)
         # Filter neighbor
         if logging.edge_threshold < 10:
             edge, attribute, attributeCharge = filter_neighbor(edge, attribute, attributeCharge, logging.edge_threshold)

@@ -71,7 +71,7 @@ def initiate_argument():
     #                     action='store_true', default=True)
     parser.add_argument('--bias_distance', metavar='',
                         help='Value for substracting distance of attribute',
-                        default=0, type=int)
+                        default=0, type=float)
     parser.add_argument('--softmax_data',
                         help='Set softmax layer for data before training',
                         action='store_true')

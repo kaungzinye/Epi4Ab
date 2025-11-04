@@ -19,8 +19,14 @@ def record_test(trueY, predY, softY=None, cips_evaluate = False):
     if cips_evaluate:
         true_interface = np.where(true_interface == 1, True, False)
         pred_interface = np.where(pred_interface == 1, True, False)
-        roc_auc_score = sk_metrics.roc_auc_score(true_interface,pred_interface)
-        average_precision_score = sk_metrics.average_precision_score(true_interface,pred_interface)
+        # Check if both classes are present before computing ROC AUC
+        if len(np.unique(true_interface)) == 2:
+            roc_auc_score = sk_metrics.roc_auc_score(true_interface,pred_interface)
+            average_precision_score = sk_metrics.average_precision_score(true_interface,pred_interface)
+        else:
+            # If only one class present, set ROC AUC and AP to NaN
+            roc_auc_score = np.nan
+            average_precision_score = np.nan
         recall_score = sk_metrics.recall_score(true_interface,pred_interface, zero_division=0, average='binary')
         precision_score = sk_metrics.precision_score(true_interface,pred_interface, zero_division=0, average='binary')
         f1_score = sk_metrics.f1_score(true_interface,pred_interface, zero_division=0, average='binary')
