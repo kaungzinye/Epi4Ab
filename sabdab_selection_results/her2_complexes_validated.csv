@@ -1,0 +1,7 @@
+PDB_ID,Antigen_UniProt,Antibody_Chains,Heavy_Chain,Light_Chain,Antigen_Chain,CDR_Available,CDR_Extractable,Binding_Validated,Epitope_Extracted,Multiple_Antibodies
+3n85,,H,H,L,A,False,True,True,False,False
+1n8z,,B,B,A,C,False,True,False,False,
+1s78,,F,F,E,B,False,True,False,False,
+1s78,,D,D,C,A,False,True,False,False,
+6b0n,,D,D,E,G,False,True,False,False,
+6b0n,,H,H,L,G,False,True,True,False,

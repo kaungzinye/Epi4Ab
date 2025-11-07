@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
-Pre-processing script for BepiPred/Ellipro predictions on login node.
+Pre-processing script for BepiPred 3.0 predictions on login node.
 
-This script should be run on the login node (has internet access) BEFORE
-submitting processing jobs. It fetches epitope predictions and caches them
-so compute nodes can use cached results without needing internet access.
+This script should be run on the LOGIN NODE (has internet for ESM model download) 
+BEFORE submitting processing jobs. It fetches BepiPred 3.0 predictions and caches 
+them so compute nodes can use cached results without needing internet access.
+
+Workflow:
+1. Run this script on login node → Generates BepiPred predictions and caches them
+2. Submit SLURM jobs on compute nodes → Uses cached predictions (no internet needed)
 
 Usage:
     python preprocess_epitope_predictions.py --pdb_list pdb_list.txt --output_cache /path/to/cache/
@@ -62,13 +66,15 @@ def preprocess_single_pdb(pdb_id: str, pdb_file: str, cache_dir: str, fasta_dir:
             print(f"  ⚠️  BepiPred error: {e}")
         
         # Fetch Ellipro predictions (will cache automatically)
+        # NOTE: Ellipro REQUIRES preprocessing on login node (web API only)
+        # Compute nodes will use cached Ellipro predictions
         try:
-            print(f"  Fetching Ellipro predictions...")
+            print(f"  Fetching Ellipro predictions (web API - login node only)...")
             ellipro_scores = processor.get_ellipro_predictions(pdb_file, cache_dir=cache_dir)
             if ellipro_scores:
                 print(f"  ✓ Ellipro: {len(ellipro_scores)} predictions cached")
             else:
-                print(f"  ⚠️  Ellipro: Failed to fetch predictions")
+                print(f"  ⚠️  Ellipro: Failed to fetch predictions (may require internet)")
         except Exception as e:
             print(f"  ⚠️  Ellipro error: {e}")
         
@@ -86,7 +92,7 @@ def preprocess_single_pdb(pdb_id: str, pdb_file: str, cache_dir: str, fasta_dir:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Pre-process PDB files to fetch BepiPred/Ellipro predictions on login node'
+        description='Pre-process PDB files to fetch BepiPred 3.0 predictions on login node'
     )
     parser.add_argument('--pdb_list', type=str, help='Path to file containing list of PDB IDs (one per line)')
     parser.add_argument('--pdb_id', type=str, help='Single PDB ID to process')

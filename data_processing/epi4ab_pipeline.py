@@ -425,13 +425,28 @@ class Epi4AbDataProcessor:
         On Leonardo HPC, compute nodes typically have SLURM environment variables.
         """
         import os
-        # Check for SLURM environment (indicates compute node)
-        if os.environ.get('SLURM_JOB_ID') or os.environ.get('SLURM_NODELIST'):
-            # Additional check: try to detect if we can reach internet
-            # If SLURM_JOB_NODELIST exists and we're not on login node, likely compute node
-            node_name = os.environ.get('SLURMD_NODENAME', '')
-            if node_name and 'login' not in node_name.lower():
+        import socket
+        
+        # Check hostname first (most reliable)
+        hostname = os.environ.get('HOSTNAME', '')
+        if hostname:
+            # Leonardo login nodes are typically named like "loginXX.leonardo.local"
+            if 'login' in hostname.lower():
+                return False
+            # Compute nodes often have different naming patterns
+            if any(pattern in hostname.lower() for pattern in ['node', 'compute', 'r', 'gpu']):
                 return True
+        
+        # Check for SLURM environment (indicates compute node typically)
+        if os.environ.get('SLURM_JOB_ID'):
+            # Additional check: try to detect if we can reach internet quickly
+            try:
+                socket.create_connection(("8.8.8.8", 53), timeout=2)
+                return False  # Can reach internet, likely login node
+            except (socket.error, OSError):
+                return True  # Cannot reach internet, likely compute node
+        
+        # Default: assume login node if uncertain (safer for API calls)
         return False
     
     def get_bepipred_predictions(self, sequence: str, cache_dir: Optional[str] = None) -> Optional[Dict[int, float]]:
@@ -439,8 +454,8 @@ class Epi4AbDataProcessor:
         Get BepiPred 3.0 epitope predictions for a protein sequence.
         
         HPC-aware implementation:
-        1. Check cache first (works on compute nodes, fastest)
-        2. Try local tool execution (works on compute nodes)
+        1. Try local tool execution first (works on compute nodes, best performance)
+        2. Check cache (works on compute nodes, from pre-fetched predictions)
         3. Try web API last (only works on login node, warns if on compute node)
         
         Args:
@@ -456,22 +471,83 @@ class Epi4AbDataProcessor:
             cache_path = Path(cache_dir)
             cache_path.mkdir(parents=True, exist_ok=True)
             cache_file = cache_path / f"{self.pdb_id}_bepipred.json"
-            
-            # PRIORITY 1: Check cache first (works on compute nodes, fastest)
-            if cache_file.exists():
-                try:
-                    with open(cache_file, 'r') as f:
-                        cached_data = json.load(f)
-                        # Validate sequence matches (or allow if no sequence stored)
-                        if cached_data.get('sequence') == sequence or 'sequence' not in cached_data:
-                            print(f"Using cached BepiPred predictions for {self.pdb_id}")
-                            return {int(k): float(v) for k, v in cached_data['scores'].items()}
-                        else:
-                            print(f"Warning: Cached BepiPred sequence mismatch for {self.pdb_id}, regenerating...")
-                except Exception as e:
-                    print(f"Warning: Could not read BepiPred cache: {e}")
         
-        # PRIORITY 2: Try local installation (works on compute nodes, leverages HPC performance)
+        # PRIORITY 1: Check cache FIRST (works on compute nodes, avoids unnecessary regeneration)
+        # This is Priority 1 because regenerating ESM-2 encodings and BepiPred scores is expensive
+        if cache_file and cache_file.exists():
+            try:
+                with open(cache_file, 'r') as f:
+                    cached_data = json.load(f)
+                    # Validate sequence matches (or allow if no sequence stored)
+                    if cached_data.get('sequence') == sequence or 'sequence' not in cached_data:
+                        print(f"Using cached BepiPred predictions for {self.pdb_id}")
+                        return {int(k): float(v) for k, v in cached_data['scores'].items()}
+                    else:
+                        print(f"Warning: Cached BepiPred sequence mismatch for {self.pdb_id}, regenerating...")
+            except Exception as e:
+                print(f"Warning: Could not read BepiPred cache: {e}")
+        
+        # PRIORITY 2: Try Python API (bp3 package) if cache not available (works on compute nodes)
+        try:
+            from bp3 import bepipred3
+            import tempfile
+            
+            # Create temporary FASTA file and ESM encoding directory
+            temp_dir = Path(tempfile.mkdtemp(prefix=f'bp3_{self.pdb_id}_'))
+            fasta_file = temp_dir / 'sequence.fasta'
+            esm_dir = temp_dir / 'esm_encodings'
+            
+            # Write sequence to FASTA
+            with open(fasta_file, 'w') as f:
+                f.write(f">{self.pdb_id}\n{sequence}\n")
+            
+            # Run bp3 prediction
+            antigens = bepipred3.Antigens(fasta_file, esm_dir)
+            predictor = bepipred3.BP3EnsemblePredict(antigens)
+            predictor.run_bp3_ensemble()
+            
+            # Extract probabilities (handle tensor/array conversion)
+            if hasattr(antigens, 'ensemble_probs') and antigens.ensemble_probs:
+                probs = antigens.ensemble_probs[0]
+                
+                # bp3 returns ensemble of multiple models (typically 5)
+                # Average across ensemble models to get single prediction per residue
+                import torch
+                if len(probs) > 0 and isinstance(probs[0], torch.Tensor):
+                    # Stack tensors and average across ensemble dimension
+                    stacked = torch.stack(probs)
+                    averaged = torch.mean(stacked, dim=0)
+                    averaged_list = averaged.tolist()
+                else:
+                    # Fallback: average manually if not tensors
+                    import numpy as np
+                    stacked = np.array([item.tolist() if hasattr(item, 'tolist') else item for item in probs])
+                    averaged_list = np.mean(stacked, axis=0).tolist()
+                
+                # Convert to dict: {residue_index: score}
+                predictions = {i+1: float(prob) for i, prob in enumerate(averaged_list)}
+                
+                # Cache results
+                if cache_dir and cache_file:
+                    cache_data = {
+                        'sequence': sequence,
+                        'scores': {str(k): float(v) for k, v in predictions.items()}
+                    }
+                    with open(cache_file, 'w') as f:
+                        json.dump(cache_data, f)
+                
+                # Clean up temp directory
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                
+                print(f"✓ Generated BepiPred-3.0 predictions using bp3 Python API for {self.pdb_id}")
+                return predictions
+        except ImportError:
+            print("  → bp3 package not available, trying command-line tools...")
+        except Exception as e:
+            print(f"  ⚠️  bp3 Python API failed: {e}")
+        
+        # PRIORITY 3: Try command-line tools (works on compute nodes)
         try:
             # Check multiple possible command names
             for cmd_name in ['bepipred', 'bepipred-3.0', 'bepipred3.0']:
@@ -494,7 +570,8 @@ class Epi4AbDataProcessor:
         except Exception as e:
             print(f"Warning: Local BepiPred execution failed: {e}")
         
-        # PRIORITY 3: Try web API (only works on login node)
+        # PRIORITY 4: Try web API (only works on login node, not recommended - use cache instead)
+        # Note: This is rarely reached since cache should exist from preprocessing
         is_compute = self._is_compute_node()
         if is_compute:
             print(f"Warning: Running on compute node (no internet). Cannot fetch BepiPred via API.")
@@ -531,7 +608,7 @@ class Epi4AbDataProcessor:
             except Exception as e:
                 print(f"Warning: BepiPred web API failed: {e}")
         
-        print(f"Warning: Could not obtain BepiPred predictions for {self.pdb_id}. Using fallback.")
+        print(f"Warning: Could not obtain BepiPred predictions for {self.pdb_id}.")
         return None
     
     def _parse_bepipred_response(self, response_text: str) -> Dict[int, float]:
@@ -603,8 +680,8 @@ class Epi4AbDataProcessor:
         Get Ellipro epitope predictions for a PDB structure.
         
         HPC-aware implementation:
-        1. Check cache first (works on compute nodes, fastest)
-        2. Try local tool execution (works on compute nodes)
+        1. Try local tool execution first (works on compute nodes, best performance)
+        2. Check cache (works on compute nodes, from pre-fetched predictions)
         3. Try web API last (only works on login node, warns if on compute node)
         
         Args:
@@ -620,18 +697,20 @@ class Epi4AbDataProcessor:
             cache_path = Path(cache_dir)
             cache_path.mkdir(parents=True, exist_ok=True)
             cache_file = cache_path / f"{self.pdb_id}_ellipro.json"
-            
-            # PRIORITY 1: Check cache first (works on compute nodes, fastest)
-            if cache_file.exists():
-                try:
-                    with open(cache_file, 'r') as f:
-                        cached_data = json.load(f)
-                        print(f"Using cached Ellipro predictions for {self.pdb_id}")
-                        return {int(k): float(v) for k, v in cached_data['scores'].items()}
-                except Exception as e:
-                    print(f"Warning: Could not read Ellipro cache: {e}")
         
-        # PRIORITY 2: Try local installation (works on compute nodes, leverages HPC performance)
+        # PRIORITY 1: Check cache first (works on compute nodes, from pre-fetched predictions on login node)
+        # This is Priority 1 because Ellipro has no local tool - only web API
+        # So cache is the primary way to use Ellipro on compute nodes
+        if cache_file and cache_file.exists():
+            try:
+                with open(cache_file, 'r') as f:
+                    cached_data = json.load(f)
+                    print(f"Using cached Ellipro predictions for {self.pdb_id}")
+                    return {int(k): float(v) for k, v in cached_data['scores'].items()}
+            except Exception as e:
+                print(f"Warning: Could not read Ellipro cache: {e}")
+        
+        # PRIORITY 2: Try local tools (if any exist - unlikely for Ellipro)
         try:
             # Check multiple possible command names
             for cmd_name in ['ellipro', 'ellipro-web', 'ellipro-standalone']:
@@ -650,38 +729,78 @@ class Epi4AbDataProcessor:
         except Exception as e:
             print(f"Warning: Local Ellipro execution failed: {e}")
         
-        # PRIORITY 3: Try web API (only works on login node)
+        # PRIORITY 3: Try web API (only works on login node, with timeout to prevent hanging)
         is_compute = self._is_compute_node()
         if is_compute:
             print(f"Warning: Running on compute node (no internet). Cannot fetch Ellipro via API.")
             print(f"         Pre-fetch predictions on login node or install local tools.")
         else:
+            # Add explicit timeout and quick check to prevent hanging
             try:
                 import requests
-                # Ellipro web API endpoint (placeholder - adjust based on actual API)
-                url = "https://tools.iedb.org/ellipro/webservice"
+                import socket
                 
-                with open(pdb_file, 'rb') as f:
-                    files = {'pdb_file': f}
-                    response = requests.post(url, files=files, timeout=60)
+                # Quick connectivity check (don't hang if no internet)
+                try:
+                    socket.create_connection(("tools.iedb.org", 443), timeout=5)
+                except (socket.error, OSError):
+                    print(f"Warning: Cannot reach IEDB API (no internet or timeout). Skipping Ellipro web API.")
+                    return None
                 
-                if response.status_code == 200:
-                    predictions = self._parse_ellipro_response(response.text)
-                    
+                # Ellipro web API endpoint
+                # Note: IEDB Ellipro may not have a public REST API
+                # Trying common IEDB API patterns
+                endpoints_to_try = [
+                    "https://services.iedb.org/ellipro/rest/submit",
+                    "https://tools.iedb.org/ellipro/rest/submit",
+                    "https://tools.iedb.org/bcell/rest/ellipro",
+                ]
+                
+                predictions = None
+                for url in endpoints_to_try:
+                    try:
+                        print(f"  → Attempting Ellipro API: {url}...")
+                        with open(pdb_file, 'rb') as f:
+                            files = {'pdb_file': f, 'file': f}
+                            data = {'method': 'ellipro'}
+                            # Try POST with file
+                            response = requests.post(url, files=files, data=data, timeout=30)
+                            
+                            if response.status_code == 200:
+                                predictions = self._parse_ellipro_response(response.text)
+                                if predictions:
+                                    break
+                            elif response.status_code != 404:
+                                print(f"    Status {response.status_code}, trying next endpoint...")
+                    except Exception as e:
+                        print(f"    Error with {url}: {e}")
+                        continue
+                
+                if predictions:
                     # Cache results for future use (especially for compute nodes)
-                    if cache_dir and cache_file and predictions:
+                    if cache_dir and cache_file:
                         cache_data = {'scores': {str(k): float(v) for k, v in predictions.items()}}
                         with open(cache_file, 'w') as f:
                             json.dump(cache_data, f)
                         print(f"✓ Fetched and cached Ellipro predictions for {self.pdb_id}")
                     
                     return predictions
+                else:
+                    # If all endpoints fail, Ellipro likely has no public API
+                    print(f"Warning: Ellipro API not available (no public REST endpoint found)")
+                    print(f"         Ellipro is primarily a web-based tool at https://tools.iedb.org/ellipro/")
+                    print(f"         Manual preprocessing may be required, or use BepiPred 3.0 only.")
+                    return None
+            except requests.exceptions.Timeout:
+                print(f"Warning: Ellipro web API timeout (30s). Pre-fetch on login node or use cache.")
+            except requests.exceptions.ConnectionError:
+                print(f"Warning: Ellipro web API connection failed (no internet). Skipping.")
             except ImportError:
                 print("Warning: requests library not available")
             except Exception as e:
                 print(f"Warning: Ellipro web API failed: {e}")
         
-        print(f"Warning: Could not obtain Ellipro predictions for {self.pdb_id}. Using fallback.")
+        print(f"Warning: Could not obtain Ellipro predictions for {self.pdb_id}.")
         return None
     
     def _parse_ellipro_response(self, response_text: str) -> Dict[int, float]:
@@ -996,7 +1115,7 @@ class Epi4AbDataProcessor:
         """
         Extract epitope labels according to Epi4Ab methodology:
         - Label 1: Direct antibody-interacting residues within 5Å (CIPS)
-        - Label 2: Potential epitopes (Ellipro + BepiPred 3.0 consensus)
+        - Label 2: Potential epitopes (BepiPred 3.0 OR Ellipro consensus)
         - Label 0: Non-epitopes
         """
         print(f"Extracting epitope labels for {self.pdb_id}...")
@@ -1021,15 +1140,33 @@ class Epi4AbDataProcessor:
             print(f"Warning: Could not get antigen sequence for BepiPred: {e}")
         
         # Get Ellipro predictions (requires PDB file)
-        try:
-            ellipro_scores = self.get_ellipro_predictions(self.pdb_file, cache_dir=cache_dir)
-        except Exception as e:
-            print(f"Warning: Could not get Ellipro predictions: {e}")
+        # Ellipro needs preprocessing on login node (web API only)
+        # On compute nodes, use cached Ellipro predictions
+        ellipro_scores = None
+        is_compute = self._is_compute_node()
+        if is_compute:
+            # On compute node: only use cached Ellipro (from preprocessing on login node)
+            # Skip web API calls to avoid hanging
+            print(f"Skipping Ellipro web API (running on compute node - no internet access)")
+            print(f"Will use cached Ellipro predictions if available")
+        else:
+            # On login node: can fetch Ellipro via web API
+            try:
+                ellipro_scores = self.get_ellipro_predictions(self.pdb_file, cache_dir=cache_dir)
+            except Exception as e:
+                print(f"Warning: Could not get Ellipro predictions: {e}")
+                ellipro_scores = None
         
-        # Determine if we're using real predictions or fallback
+        # Label 2 uses consensus: BepiPred 3.0 OR Ellipro
+        # Either tool predicting epitope = Label 2
         use_real_predictions = (bepipred_scores is not None) or (ellipro_scores is not None)
         if not use_real_predictions:
-            print(f"Warning: BepiPred/Ellipro predictions not available. Using simplified RSA fallback.")
+            print(f"Warning: BepiPred 3.0 and Ellipro predictions not available. Label 2 will be set to 0 (non-epitope).")
+        else:
+            if bepipred_scores:
+                print(f"  ✓ BepiPred 3.0: {len(bepipred_scores)} predictions available")
+            if ellipro_scores:
+                print(f"  ✓ Ellipro: {len(ellipro_scores)} predictions available")
         
         labels = []
         for residue in antigen.residues:
@@ -1051,28 +1188,26 @@ class Epi4AbDataProcessor:
                 if min_distance <= 5.0:
                     label = 1
                 else:
-                    # Label 2: Potential epitope (use BepiPred/Ellipro if available, else RSA fallback)
+                    # Label 2: Potential epitope (use BepiPred 3.0 OR Ellipro consensus)
                     if use_real_predictions:
-                        # Use BepiPred/Ellipro consensus
+                        # Get scores from both tools (use 0.0 if not available)
                         bepipred_score = bepipred_scores.get(res_id, 0.0) if bepipred_scores else 0.0
                         ellipro_score = ellipro_scores.get(res_id, 0.0) if ellipro_scores else 0.0
                         
-                        # Consensus: residue is predicted epitope if either tool predicts it
-                        # Threshold: BepiPred typically uses 0.5, Ellipro uses probability threshold
-                        bepipred_threshold = 0.5  # BepiPred default threshold
-                        ellipro_threshold = 0.5  # Ellipro default threshold (adjust if needed)
+                        # Consensus: residue is predicted epitope if EITHER tool predicts it
+                        # BepiPred 3.0 scores typically range 0.0-0.4, max around 0.38
+                        # Since BepiPred is supplementary to CIPS (Label 1), use conservative threshold
+                        # Threshold 0.3 keeps Label 2 low (~0-20% depending on structure) - fewer false positives
+                        bepipred_threshold = 0.3  # BepiPred 3.0 threshold (conservative, low epitope count)
+                        ellipro_threshold = 0.5   # Ellipro default threshold
                         
                         if bepipred_score >= bepipred_threshold or ellipro_score >= ellipro_threshold:
-                            label = 2  # Predicted epitope
+                            label = 2  # Predicted epitope (consensus)
                         else:
                             label = 0  # Non-epitope
                     else:
-                        # Fallback: Use simplified RSA calculation
-                        rsa = self.calculate_rsa(residue)
-                        if rsa > 0.5:  # Surface residue
-                            label = 2
-                        else:
-                            label = 0  # Non-epitope
+                        # No predictions available: set to non-epitope (Label 0)
+                        label = 0  # Non-epitope
             else:
                 label = 0  # No antibody found
             

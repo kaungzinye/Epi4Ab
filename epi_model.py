@@ -5,8 +5,11 @@ print('''------ AMPM Project ------
 import torch
 import os
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 from tabulate import tabulate
+from pathlib import Path
+import glob
+import re
 
 import_script_start = datetime.now()
 from use_model.arguments import initiate_argument
@@ -19,6 +22,89 @@ from interface_prediction.evaluation_and_plot.result_evaluation import table_mea
 from interface_prediction.model.model_function import choose_model
 import_script_time = datetime.now() - import_script_start
 print(f'Import necessary library: {import_script_time}')
+
+
+def cleanup_old_logs(logs_dir: str = 'logs'):
+    """
+    Clean up old log files, keeping only the most recent log from previous day.
+    
+    For each job type (e.g., epi4ab-infer-all-*.out), keeps only the most recent
+    log file from the previous day and deletes all older logs.
+    """
+    logs_path = Path(logs_dir)
+    if not logs_path.exists():
+        print(f"Logs directory not found: {logs_dir}")
+        return
+    
+    print("Cleaning up old log files...")
+    
+    # Get current date
+    today = datetime.now().date()
+    yesterday = today - timedelta(days=1)
+    
+    # Find all log files
+    log_files = list(logs_path.glob('*.out')) + list(logs_path.glob('*.err'))
+    
+    if not log_files:
+        print("  No log files found.")
+        return
+    
+    # Group logs by job type (extract job name pattern)
+    job_patterns = {}
+    for log_file in log_files:
+        # Extract job name pattern (e.g., "epi4ab-infer-all" from "epi4ab-infer-all-12345.out")
+        match = re.match(r'([^-]+(?:-[^-]+)*)-\d+\.(out|err)', log_file.name)
+        if match:
+            job_name = match.group(1)
+            log_type = match.group(2)
+            key = f"{job_name}.{log_type}"
+            
+            if key not in job_patterns:
+                job_patterns[key] = []
+            job_patterns[key].append(log_file)
+    
+    deleted_count = 0
+    kept_count = 0
+    
+    for job_key, files in job_patterns.items():
+        # Get modification dates
+        files_with_dates = []
+        for f in files:
+            mtime = datetime.fromtimestamp(f.stat().st_mtime)
+            files_with_dates.append((f, mtime.date(), mtime))
+        
+        # Separate files by date
+        today_files = [(f, dt, mt) for f, dt, mt in files_with_dates if dt == today]
+        yesterday_files = [(f, dt, mt) for f, dt, mt in files_with_dates if dt == yesterday]
+        older_files = [(f, dt, mt) for f, dt, mt in files_with_dates if dt < yesterday]
+        
+        # Keep all today's files
+        kept_count += len(today_files)
+        
+        # Keep only most recent from yesterday
+        if yesterday_files:
+            yesterday_files.sort(key=lambda x: x[2], reverse=True)
+            kept_count += 1
+            # Delete other yesterday files
+            for f, _, _ in yesterday_files[1:]:
+                try:
+                    f.unlink()
+                    deleted_count += 1
+                except Exception as e:
+                    print(f"  Warning: Could not delete {f.name}: {e}")
+        
+        # Delete all older files
+        for f, _, _ in older_files:
+            try:
+                f.unlink()
+                deleted_count += 1
+            except Exception as e:
+                print(f"  Warning: Could not delete {f.name}: {e}")
+    
+    print(f"  Cleanup complete: Kept {kept_count} files, deleted {deleted_count} old files.")
+
+# Clean up old log files before starting
+cleanup_old_logs()
 
 # Initiate arguments
 prepare_start_time = datetime.now()
@@ -83,6 +169,31 @@ with open(os.path.join(output_folder, 'evaluation_each_pdb.txt'), 'w') as f:
         f.write(tabulate(evaluation_record, headers=logging.info_record_columns))
         f.write('\n')
 logging.result_time = datetime.now()
+
+# Generate interactive HTML visualizations
+visualizer_start_time = datetime.now()
+try:
+    print('Generating interactive HTML visualizations...', end=' ')
+    from generate_visualizer import generate_visualizations
+    
+    eval_file = os.path.join(output_folder, 'evaluation_each_pdb.txt')
+    eval_file_path = eval_file if os.path.exists(eval_file) else None
+    
+    generate_visualizations(
+        test_record_dir=test_record_folder,
+        output_dir=output_folder,
+        pdb_id=None,  # Generate for all PDBs
+        evaluation_file=eval_file_path,
+        pdb_files_dir='/leonardo_scratch/fast/AIFAC_F01_302/epi4ab/pdb_files'
+    )
+    
+    visualizer_time = datetime.now() - visualizer_start_time
+    print(f'Done ({visualizer_time})')
+    print(f'  Visualizations saved to: {output_folder}')
+except Exception as e:
+    print(f'Warning: Could not generate visualizations: {e}')
+    import traceback
+    traceback.print_exc()
 
 print('Generate log: ', end='')
 logging.log_result()

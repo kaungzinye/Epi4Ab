@@ -38,13 +38,64 @@ def record_test(trueY, predY, softY=None, cips_evaluate = False):
             roc_auc_score = sk_metrics.roc_auc_score(true_interface,pred_interface)
             average_precision_score = sk_metrics.average_precision_score(true_interface,pred_interface)
         else:
+            # Multi-class case (3 classes expected)
+            unique_classes = np.unique(true_interface)
+            num_classes = len(unique_classes)
+            
             if softY is not None:
                 soft_pred_interface = softY.detach().cpu().numpy()
-                roc_auc_score = sk_metrics.roc_auc_score(true_interface,soft_pred_interface, average='macro', multi_class='ovo')
-                average_precision_score = sk_metrics.average_precision_score(true_interface,soft_pred_interface, average='micro')
+                num_pred_classes = soft_pred_interface.shape[1] if len(soft_pred_interface.shape) > 1 else 1
+                
+                # Check if number of classes in true labels matches prediction columns
+                if num_classes == num_pred_classes and num_classes == 3:
+                    # All 3 classes present - can compute multi-class ROC AUC
+                    try:
+                        roc_auc_score = sk_metrics.roc_auc_score(true_interface, soft_pred_interface, average='macro', multi_class='ovo')
+                        average_precision_score = sk_metrics.average_precision_score(true_interface, soft_pred_interface, average='micro')
+                    except ValueError as e:
+                        # Handle case where multi-class ROC AUC fails (e.g., not all class pairs present)
+                        roc_auc_score = np.nan
+                        average_precision_score = np.nan
+                elif num_classes == 2:
+                    # Only 2 classes present - convert to binary
+                    # Map classes to 0/1 for binary ROC AUC
+                    class_map = {cls: idx for idx, cls in enumerate(sorted(unique_classes))}
+                    true_binary = np.array([class_map[cls] for cls in true_interface])
+                    # Use probabilities for the two present classes
+                    pred_binary = soft_pred_interface[:, sorted(unique_classes)][:, 1]  # Probability of positive class
+                    try:
+                        roc_auc_score = sk_metrics.roc_auc_score(true_binary, pred_binary)
+                        average_precision_score = sk_metrics.average_precision_score(true_binary, pred_binary)
+                    except ValueError:
+                        roc_auc_score = np.nan
+                        average_precision_score = np.nan
+                else:
+                    # Single class or mismatch - set to NaN
+                    roc_auc_score = np.nan
+                    average_precision_score = np.nan
             else:
-                roc_auc_score = sk_metrics.roc_auc_score(true_interface,pred_interface, average='macro', multi_class='ovo')
-                average_precision_score = sk_metrics.average_precision_score(true_interface,pred_interface, average='micro')
+                # No softmax predictions available - use hard predictions
+                if num_classes == 3:
+                    try:
+                        roc_auc_score = sk_metrics.roc_auc_score(true_interface, pred_interface, average='macro', multi_class='ovo')
+                        average_precision_score = sk_metrics.average_precision_score(true_interface, pred_interface, average='micro')
+                    except ValueError:
+                        roc_auc_score = np.nan
+                        average_precision_score = np.nan
+                elif num_classes == 2:
+                    # Convert to binary
+                    class_map = {cls: idx for idx, cls in enumerate(sorted(unique_classes))}
+                    true_binary = np.array([class_map[cls] for cls in true_interface])
+                    pred_binary = np.array([class_map[cls] for cls in pred_interface])
+                    try:
+                        roc_auc_score = sk_metrics.roc_auc_score(true_binary, pred_binary)
+                        average_precision_score = sk_metrics.average_precision_score(true_binary, pred_binary)
+                    except ValueError:
+                        roc_auc_score = np.nan
+                        average_precision_score = np.nan
+                else:
+                    roc_auc_score = np.nan
+                    average_precision_score = np.nan
             '''
             For example recall scrore
                 Micro: Sum of absolute tp and fn/fp of each classes.

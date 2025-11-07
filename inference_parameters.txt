@@ -1,0 +1,44 @@
+# Inference-specific parameters for epi_model.py
+# These are the only parameters that epi_model.py accepts
+
+# Model configuration (needed for loading the trained model)
+model_name=GNNResNet
+model_block=GNNResNetBlock_Cheb
+feature_version=v1.0.2
+
+# Feature usage flags
+use_struct
+use_pretrained
+pretrained_model=ESM2_t30
+use_antiberty
+antiberty_cdr_list=H1 H2 H3 L1 L2 L3
+
+# Architecture parameters (needed to reconstruct model)
+use_mha_on=seq
+mha_head=4
+mha_num_layers=6
+max_antigen_len=670
+mha_dropout=0.2
+
+# Edge configuration
+edge_type=dist
+edge_threshold=10
+bias_distance=-0.1
+
+# Label configuration
+label_from_ellipro_pi
+block_norm=batchnorm
+
+# Model architecture (needed to load the trained model)
+attribute_weight=0.1735178381204605 -0.05394153669476509 -0.0020570196211338043
+num_layers=8
+drop_out=0.2 0.2 0.0 0.3 0.4 0.3 0.0 0.0
+hidden_channel=128 64 96 128 96 96 32 64
+attention_head=5
+dropout_edge_p=0.2
+
+# Inference flags (these are the main ones epi_model.py uses)
+use_region=false
+use_relaxed=false
+plot_network=false
+ab_feature_input=true

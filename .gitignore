@@ -2,6 +2,11 @@
 **/output/**
 output/
 __pycache__
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
 .rescache
 .ipynb_checkpoints
 .DS_Store
@@ -10,3 +15,43 @@ parameters.txt
 **/pdb_list
 **/suggestion.py
 **/feature_columns.json
+
+# Logs and SLURM outputs
+logs/
+*.out
+*.err
+*.log
+
+# Data files (large)
+*.parquet
+*.pdb
+*.fasta
+*.csv
+!**/sabdab_selection_results/*.csv
+sabdab_raw.csv
+sabdab_summary.tsv
+
+# Generated visualizations
+*.html
+!docs/**/*.html
+
+# Validation results
+validation_results_*.json
+
+# Temporary and cache files
+*.cache
+.cache/
+*.tmp
+*.swp
+*~
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-*
+
+# Large data directories (if they exist locally)
+processed/
+pdb_files/
+run_model_output/
+epitope_predictions_cache/

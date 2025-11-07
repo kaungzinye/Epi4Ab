@@ -1,0 +1,13 @@
+PDB,In_SAbDab,Resolution,Meets_Resolution,Has_H_L_Chains,Single_Chain_Antigen,Has_Publication,Heavy_Chain,Light_Chain,Antigen_Chain
+1N8Z,Yes,2.52,Yes,Yes,Yes,No,B,A,C
+1S78,Yes,3.25,Yes,Yes,Yes,No,F,E,B
+3N85,Yes,3.20,Yes,Yes,Yes,Yes,H,L,A
+4K5Y,No,N/A,Unknown,Unknown,Unknown,Unknown,N/A,N/A,N/A
+5F8B,No,N/A,Unknown,Unknown,Unknown,Unknown,N/A,N/A,N/A
+6B0J,No,N/A,Unknown,Unknown,Unknown,Unknown,N/A,N/A,N/A
+6B0K,No,N/A,Unknown,Unknown,Unknown,Unknown,N/A,N/A,N/A
+6B0L,No,N/A,Unknown,Unknown,Unknown,Unknown,N/A,N/A,N/A
+6B0N,Yes,3.40,Yes,Yes,Yes,No,D,E,G
+6B0O,No,N/A,Unknown,Unknown,Unknown,Unknown,N/A,N/A,N/A
+6B0P,No,N/A,Unknown,Unknown,Unknown,Unknown,N/A,N/A,N/A
+6B0Q,No,N/A,Unknown,Unknown,Unknown,Unknown,N/A,N/A,N/A

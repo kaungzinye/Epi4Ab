@@ -220,13 +220,36 @@
 │  │        ├─ Calculate distance: antigen CA → antibody CA       │  │
 │  │        └─ Label 1: Direct antibody-interacting (≤5Å)        │  │
 │  │                                                              │  │
-│  │  1.9.3 CALCULATE LABEL 2 (ELLIPRO + BEPIPRED)                │  │
-│  │        ├─ Try BepiPred 3.0 predictions (web API or local)   │  │
-│  │        ├─ Try Ellipro predictions (web API or local)         │  │
-│  │        ├─ Consensus: residue predicted if either tool       │  │
-│  │        │   predicts it (threshold: 0.5 for both)            │  │
-│  │        ├─ Cache predictions to avoid repeated API calls     │  │
-│  │        └─ Fallback: Simplified RSA if predictions unavailable│  │
+│  │  1.9.3 CALCULATE LABEL 2 (BEPIPRED 3.0 OR ELLIPRO CONSENSUS) │  │
+│  │                                                              │  │
+│  │        PREPROCESSING (Login Node - Optional but Recommended):│  │
+│  │        ├─ Run: preprocess_epitope_predictions.py            │  │
+│  │        ├─ Fetches Ellipro via web API (login node only)    │  │
+│  │        ├─ Optionally pre-generates BepiPred predictions    │  │
+│  │        └─ Caches both to cache directory                    │  │
+│  │                                                              │  │
+│  │        BEPIPRED 3.0 (Priority Order):                      │  │
+│  │        ├─ Priority 1: Run bp3 locally (works on compute    │  │
+│  │        │              nodes, ESM models cached)             │  │
+│  │        ├─ Priority 2: Use cache (if preprocessed)          │  │
+│  │        └─ Priority 3: Web API (login node only)            │  │
+│  │                                                              │  │
+│  │        ELLIPRO (Priority Order):                            │  │
+│  │        ├─ Priority 1: Use cache (from preprocessing on      │  │
+│  │        │              login node)                           │  │
+│  │        ├─ Priority 2: Try local tool (unlikely, no          │  │
+│  │        │              standalone tool exists)               │  │
+│  │        └─ Priority 3: Web API (login node only, skipped     │  │
+│  │                      on compute nodes)                     │  │
+│  │                                                              │  │
+│  │        LABEL 2 CONSENSUS:                                   │  │
+│  │        ├─ Label 2 if BepiPred score >= 0.3 OR               │  │
+│  │        │         Ellipro score >= 0.5                       │  │
+│  │        ├─ Either tool predicting epitope = Label 2          │  │
+│  │        ├─ Note: BepiPred 3.0 threshold = 0.3 (scores       │  │
+│  │        │        typically range 0.0-0.4)                    │  │
+│  │        └─ No fallback: Label 2 = 0 if predictions          │  │
+│  │          unavailable (strict requirement)                   │  │
 │  │                                                              │  │
 │  │  1.9.4 SAVE LABELS                                           │  │
 │  │        └─ node_label_pi.parquet: Three-class labels         │  │
@@ -371,9 +394,22 @@
 
 ## SLURM Workflow
 
+### Preprocessing (Login Node - Optional but Recommended for Ellipro)
+```
+# Pre-fetch Ellipro predictions (web API only works on login node)
+python preprocess_epitope_predictions.py \
+    --pdb_list pdb_list.txt \
+    --output_cache /path/to/cache/
+         ↓ (~5-10 min per PDB)
+Cached predictions ready for compute nodes
+```
+
+### Main Processing Pipeline
 ```
 sbatch slurm/process_data.sbatch    # Step 1: Process all PDBs
          ↓ (~60 min)
+         ├─ Uses cached Ellipro (if preprocessed)
+         └─ Runs BepiPred 3.0 locally on compute nodes
 sbatch slurm/validate.sbatch        # Step 2: Validate processed data
          ↓ (~5 min)
 sbatch slurm/infer_all.sbatch       # Step 3: Run inference
