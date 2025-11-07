@@ -34,8 +34,11 @@ echo "Running inference on HER2 structures from SAbDab selection"
 echo "==========================================="
 
 # Use HER2 test set from SAbDab selection (filtered by criteria: resolution ≤4Å, H+L chains, single-chain antigen)
-# Priority: filtered list > unique list > paper list
-HER2_LIST="$PROJ/sabdab_selection_results/her2_test_set_filtered.csv"
+# Priority: corrected list (excludes 6BGT from training) > filtered list > unique list > paper list
+HER2_LIST="$PROJ/sabdab_selection_results/her2_test_set_filtered_corrected.csv"
+if [ ! -f "$HER2_LIST" ]; then
+    HER2_LIST="$PROJ/sabdab_selection_results/her2_test_set_filtered.csv"
+fi
 if [ ! -f "$HER2_LIST" ]; then
     HER2_LIST="$PROJ/sabdab_selection_results/her2_test_set_unique.csv"
 fi
