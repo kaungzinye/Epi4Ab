@@ -17,7 +17,9 @@ class TrainModel:
                  train_all,
                  epoch_number,
                  device,
-                 torch_seed):
+                 torch_seed,
+                 focal_alpha=None,
+                 focal_gamma=2.0):
         self.modelBuild = None
         self.optimizer = None
         self.batch_size = batch_size
@@ -28,7 +30,9 @@ class TrainModel:
         self.loss_function_name = loss_function
         self.loss_function = get_loss_function(loss_function, 
                                                cross_entropy_weight,
-                                               device).to(self.device)
+                                               device,
+                                               focal_alpha=focal_alpha,
+                                               focal_gamma=focal_gamma).to(self.device)
 
     def set_model(self, modelBuild, optimizer):
         self.modelBuild = modelBuild
@@ -129,7 +133,9 @@ def process_training(train_data_raw, train_list_raw, logging, relaxed_train_data
                             logging.train_all,
                             logging.epoch_number,
                             logging.device,
-                            logging.torch_seed)
+                            logging.torch_seed,
+                            focal_alpha=getattr(logging, 'focal_alpha', None),
+                            focal_gamma=getattr(logging, 'focal_gamma', 2.0))
     if logging.train_all in ['yes','with_validation']:
         model = choose_model(logging).to(logging.device)
         optimizer = set_optimizer(model, logging)

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=epi4ab-process
+#SBATCH --job-name=epi4ab-process-rerun
 #SBATCH --account=AIFAC_F01_302
 #SBATCH --partition=boost_usr_prod
 #SBATCH --qos=normal
@@ -31,40 +31,27 @@ export TOKENIZERS_PARALLELISM=false
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-${SLURM_JOB_GPUS:-0}}
 
 echo "=========================================="
-echo "Processing HER2 PDB files from SAbDab filtered list"
+echo "FORCE RERUN: Processing HER2 PDB files with new FreeSASA/PDB2PQR"
 echo "=========================================="
 
-# Use HER2 test set from SAbDab selection (filtered by criteria: resolution ≤4Å, H+L chains, single-chain antigen)
-# Priority: corrected list (excludes 6BGT from training) > filtered list > unique list > paper list
+# Use HER2 test set from SAbDab selection
 HER2_LIST="$PROJ/sabdab_selection_results/her2_test_set_filtered_corrected.csv"
 if [ ! -f "$HER2_LIST" ]; then
     HER2_LIST="$PROJ/sabdab_selection_results/her2_test_set_filtered.csv"
 fi
-if [ ! -f "$HER2_LIST" ]; then
-    HER2_LIST="$PROJ/sabdab_selection_results/her2_test_set_unique.csv"
-fi
-if [ ! -f "$HER2_LIST" ]; then
-    HER2_LIST="$PROJ/sabdab_selection_results/her2_test_set_paper.csv"
-fi
 
 if [ ! -f "$HER2_LIST" ]; then
-    echo "ERROR: No HER2 list found. Expected one of:"
-    echo "  - $PROJ/sabdab_selection_results/her2_test_set_filtered.csv"
-    echo "  - $PROJ/sabdab_selection_results/her2_test_set_unique.csv"
-    echo "  - $PROJ/sabdab_selection_results/her2_test_set_paper.csv"
+    echo "ERROR: No HER2 list found"
     exit 1
 fi
 
 echo "Using HER2 list: $HER2_LIST"
 
-# Extract PDB IDs from CSV (first column, handle both with/without header)
-# Check if first line looks like a header (contains non-PDB characters)
+# Extract PDB IDs from CSV
 FIRST_LINE=$(head -1 "$HER2_LIST")
 if [[ "$FIRST_LINE" =~ ^[A-Z0-9]{4}$ ]]; then
-    # No header, all lines are PDB IDs
     PDB_IDS=$(cat "$HER2_LIST" | cut -d',' -f1 | tr '\n' ' ')
 else
-    # Has header, skip first line
     PDB_IDS=$(tail -n +2 "$HER2_LIST" | cut -d',' -f1 | tr '\n' ' ')
 fi
 PDB_COUNT=$(echo "$PDB_IDS" | wc -w)
@@ -77,11 +64,10 @@ OUTPUT_DIR="/leonardo_scratch/fast/AIFAC_F01_302/epi4ab/processed"
 
 successful=0
 failed=0
-skipped=0
 
 for PDB_ID in $PDB_IDS; do
     echo "=========================================="
-    echo "Processing: $PDB_ID"
+    echo "Processing: $PDB_ID (FORCE RERUN)"
     echo "=========================================="
     
     # Find PDB file
@@ -89,7 +75,7 @@ for PDB_ID in $PDB_IDS; do
     
     if [ -z "$PDB_FILE" ]; then
         echo "⚠️  PDB file not found for $PDB_ID, skipping..."
-        skipped=$((skipped + 1))
+        failed=$((failed + 1))
         continue
     fi
     
@@ -99,24 +85,12 @@ for PDB_ID in $PDB_IDS; do
     PDB_OUTPUT_DIR="$OUTPUT_DIR/$PDB_ID"
     mkdir -p "$PDB_OUTPUT_DIR"
     
-    # Check if already processed (skip if node_feature.parquet exists)
-    # Set FORCE_REPROCESS=1 to reprocess all PDBs regardless
-    if [ "${FORCE_REPROCESS:-0}" != "1" ] && [ -f "$PDB_OUTPUT_DIR/node_feature.parquet" ]; then
-        echo "✓ $PDB_ID already processed, skipping..."
-        echo "  (Set FORCE_REPROCESS=1 to reprocess)"
-        skipped=$((skipped + 1))
-        continue
-    fi
+    # FORCE RERUN: Remove old cache directories to ensure fresh calculations
+    echo "Clearing old cache directories for fresh FreeSASA/PDB2PQR calculations..."
+    rm -rf "$PDB_OUTPUT_DIR/rsa_cache" "$PDB_OUTPUT_DIR/naccess_cache" "$PDB_OUTPUT_DIR/pdb2pqr_cache" 2>/dev/null || true
     
-    # If reprocessing, remove old cache directories to ensure fresh calculations
-    if [ "${FORCE_REPROCESS:-0}" == "1" ] && [ -f "$PDB_OUTPUT_DIR/node_feature.parquet" ]; then
-        echo "🔄 Reprocessing $PDB_ID (removing old cache)..."
-        rm -rf "$PDB_OUTPUT_DIR/rsa_cache" "$PDB_OUTPUT_DIR/naccess_cache" "$PDB_OUTPUT_DIR/pdb2pqr_cache" 2>/dev/null || true
-    fi
-    
-    # Process the PDB
-    # --sequence_source auto: Tries FASTA → RCSB API → PDB extraction
-    echo "Running processing pipeline..."
+    # Process the PDB (will regenerate with new implementations)
+    echo "Running processing pipeline with new FreeSASA/PDB2PQR..."
     if srun -u python -u data_processing/epi4ab_pipeline.py \
         --pdb_file "$PDB_FILE" \
         --output_dir "$PDB_OUTPUT_DIR" \
@@ -137,7 +111,6 @@ echo "Processing Complete"
 echo "=========================================="
 echo "Successful: $successful"
 echo "Failed: $failed"
-echo "Skipped: $skipped"
 echo "Total: $PDB_COUNT"
 echo ""
 
@@ -146,5 +119,3 @@ if [ $failed -eq 0 ]; then
 else
     echo "⚠️  Some PDB files failed. Check logs for details."
 fi
-
-deactivate

@@ -137,6 +137,11 @@ class ModelLogging:
         if args.cross_entropy_weight is not None:
             assert len(args.cross_entropy_weight) == args.out_label, f'Number of Cross entropy weight ({args.cross_entropy_weight}) and number of out label ({args.out_label}) should be equal.'
         self.cross_entropy_weight = args.cross_entropy_weight
+        # Focal loss parameters
+        self.focal_alpha = args.focal_alpha if hasattr(args, 'focal_alpha') else None
+        self.focal_gamma = args.focal_gamma if hasattr(args, 'focal_gamma') else 2.0
+        if self.focal_alpha is not None:
+            assert len(self.focal_alpha) == args.out_label, f'Number of Focal alpha ({self.focal_alpha}) and number of out label ({args.out_label}) should be equal.'
         # Optimizer
         self.optimizer_method = args.optimizer_method
         self.learning_rate = args.learning_rate

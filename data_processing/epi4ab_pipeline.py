@@ -4,7 +4,7 @@ Epi4Ab Data Processing Pipeline
 Based on the detailed methodology from the Epi4Ab paper.
 
 This pipeline implements the exact data processing steps described in the paper:
-1. Node Features: Sequence (protBERT), Structural (Naccess, PDB2PQR, MDAnalysis), Biophysical (IMGT, Kyte-Doolittle)
+1. Node Features: Sequence (protBERT), Structural (FreeSASA RSA, PDB2PQR charges, MDAnalysis geometry), Biophysical (IMGT, Kyte-Doolittle)
 2. Epitope Labels: CIPS (5Å cut-off), Ellipro + BepiPred 3.0 consensus
 3. Graph Connectivity: Cα-Cα distance cut-off of 10Å
 4. Edge Attributes: Bond (1/d), Lennard-Jones, Charge (q1*q2/d) potentials
@@ -48,6 +48,26 @@ AA_MAP = {
     'GLN': 'Q', 'GLU': 'E', 'GLY': 'G', 'HIS': 'H', 'ILE': 'I',
     'LEU': 'L', 'LYS': 'K', 'MET': 'M', 'PHE': 'F', 'PRO': 'P',
     'SER': 'S', 'THR': 'T', 'TRP': 'W', 'TYR': 'Y', 'VAL': 'V'
+}
+
+# Maximum solvent-accessible surface area per amino acid (Å²)
+# Values from Tien et al. (2013) "Maximum allowed solvent accessibilities of residues in proteins"
+TIEN_RSA_MAX = {
+    'ALA': 129.0, 'ARG': 274.0, 'ASN': 195.0, 'ASP': 193.0, 'CYS': 167.0,
+    'GLN': 225.0, 'GLU': 223.0, 'GLY': 104.0, 'HIS': 224.0, 'ILE': 197.0,
+    'LEU': 201.0, 'LYS': 236.0, 'MET': 224.0, 'PHE': 240.0, 'PRO': 159.0,
+    'SER': 155.0, 'THR': 172.0, 'TRP': 285.0, 'TYR': 263.0, 'VAL': 174.0
+}
+
+# Map of modified/alternate residue names to canonical residues for RSA normalization
+ALT_RESNAME_MAP = {
+    'MSE': 'MET', 'HID': 'HIS', 'HIE': 'HIS', 'HIP': 'HIS',
+    'CYX': 'CYS', 'CYM': 'CYS', 'SEC': 'CYS',
+    'PYL': 'LYS', 'GLX': 'GLU', 'ASX': 'ASP',
+    'SEP': 'SER', 'TPO': 'THR', 'PTR': 'TYR',
+    'CSO': 'CYS', 'CSD': 'CYS', 'CSX': 'CYS',
+    'MEN': 'ASN', 'MHO': 'MET', 'KCX': 'LYS',
+    'UNK': 'GLY'
 }
 
 class Epi4AbDataProcessor:
@@ -393,31 +413,234 @@ class Epi4AbDataProcessor:
             print(f"Warning: Could not calculate dihedral angles for residue {residue.resnum}: {e}")
             return 0.0, 0.0, 0.0, 0.0
     
-    def calculate_rsa(self, residue):
+    def calculate_rsa(self, residue, cache_dir: Optional[str] = None) -> float:
         """
-        Calculate Relative Solvent Accessibility (RSA) using Naccess
-        This is a simplified version - in practice, you'd call Naccess
+        Calculate Relative Solvent Accessibility (RSA) using FreeSASA.
+
+        Strategy:
+            1. Attempt to load cached FreeSASA results (works on compute nodes without FreeSASA installed)
+            2. Otherwise run FreeSASA locally (pure Python dependency)
+            3. Cache results to disk for subsequent runs
+
+        Args:
+            residue: MDAnalysis residue object
+            cache_dir: Optional directory to cache FreeSASA results (persistent across runs)
+
+        Returns:
+            float: RSA value (0.0-1.0) for the residue, or 0.0 if calculation fails
         """
+        if not hasattr(self, '_rsa_cache'):
+            self._rsa_cache = {}
+            self._rsa_cache_initialized = False
+            self._rsa_cache_hits = 0
+            self._rsa_calculations = 0
+            self._rsa_cache_source = 'uninitialized'
+
+        if not self._rsa_cache_initialized:
+            self._initialize_rsa_cache(cache_dir)
+
         try:
-            # Get CA atom position
-            ca_atom = residue.atoms.select_atoms('name CA')
-            if len(ca_atom) == 0:
-                return 0.0
-            
-            ca_pos = ca_atom.positions[0]
-            
-            # Calculate distance to center of mass (simplified RSA)
-            com = self.universe.atoms.center_of_mass()
-            distance_to_com = np.linalg.norm(ca_pos - com)
-            
-            # Simplified RSA calculation (would be replaced by Naccess output)
-            rsa = min(1.0, distance_to_com / 20.0)
-            
-            return rsa
-            
-        except Exception as e:
-            print(f"Warning: Could not calculate RSA for residue {residue.resnum}: {e}")
+            # Determine chain ID
+            chain_id = 'A'
+            if hasattr(residue, 'segid') and residue.segid:
+                chain_id = residue.segid
+            elif hasattr(residue, 'segment') and hasattr(residue.segment, 'segid') and residue.segment.segid:
+                chain_id = residue.segment.segid
+            elif hasattr(residue, 'chainID') and residue.chainID:
+                chain_id = residue.chainID
+            elif len(residue.atoms) > 0:
+                atom = residue.atoms[0]
+                if hasattr(atom, 'segid') and atom.segid:
+                    chain_id = atom.segid
+                elif hasattr(atom, 'chainID') and atom.chainID:
+                    chain_id = atom.chainID
+
+            # Residue numbers / identifiers
+            resnum = residue.resnum if hasattr(residue, 'resnum') else getattr(residue, 'resid', None)
+            resnum_str = str(resnum) if resnum is not None else None
+            insertion_code = getattr(residue, 'icode', '') or getattr(residue, 'insertion_code', '')
+            insertion_code = insertion_code.strip() if isinstance(insertion_code, str) else ''
+            if insertion_code:
+                resnum_with_icode = f"{resnum_str}{insertion_code}"
+            else:
+                resnum_with_icode = None
+
+            lookup_keys = []
+            if resnum is not None:
+                lookup_keys.extend([
+                    (chain_id, resnum),
+                    (chain_id.upper(), resnum),
+                    (chain_id.lower(), resnum),
+                    (resnum,),
+                ])
+            if resnum_str is not None:
+                lookup_keys.extend([
+                    (chain_id, resnum_str),
+                    (chain_id.upper(), resnum_str),
+                    (chain_id.lower(), resnum_str),
+                    (resnum_str,),
+                ])
+            if resnum_with_icode:
+                lookup_keys.extend([
+                    (chain_id, resnum_with_icode),
+                    (chain_id.upper(), resnum_with_icode),
+                    (chain_id.lower(), resnum_with_icode),
+                    (resnum_with_icode,),
+                ])
+
+            for key in lookup_keys:
+                if key in self._rsa_cache:
+                    return float(self._rsa_cache[key])
+
             return 0.0
+
+        except Exception as e:
+            print(f"Warning: Could not retrieve RSA for residue {getattr(residue, 'resnum', 'unknown')}: {e}")
+            return 0.0
+
+    def _initialize_rsa_cache(self, cache_dir: Optional[str]) -> None:
+        """Load RSA cache from disk or compute with FreeSASA."""
+        cache_file = None
+        rsa_entries: List[Dict[str, float]] = []
+
+        if cache_dir:
+            cache_path = Path(cache_dir)
+            cache_path.mkdir(parents=True, exist_ok=True)
+            cache_file = cache_path / f"{self.pdb_id}_rsa_freesasa.json"
+
+        if cache_file and cache_file.exists():
+            try:
+                with open(cache_file, 'r') as f:
+                    rsa_entries = json.load(f)
+                self._rsa_cache_hits = len(rsa_entries)
+                self._rsa_cache_source = 'cache'
+                print(f"✓ Using cached FreeSASA RSA results for {self.pdb_id}")
+            except Exception as e:
+                print(f"Warning: Could not read FreeSASA cache ({cache_file}): {e}")
+                rsa_entries = []
+
+        if not rsa_entries:
+            rsa_entries = self._compute_freesasa_rsa()
+            self._rsa_calculations = len(rsa_entries)
+            self._rsa_cache_source = 'computed'
+            if cache_file and rsa_entries:
+                try:
+                    with open(cache_file, 'w') as f:
+                        json.dump(rsa_entries, f, indent=2)
+                    print(f"✓ Cached FreeSASA RSA results for {self.pdb_id} to {cache_file}")
+                except Exception as e:
+                    print(f"Warning: Could not cache FreeSASA results: {e}")
+
+        self._rsa_cache = self._expand_rsa_entries(rsa_entries)
+        self._rsa_cache_initialized = True
+
+    def _compute_freesasa_rsa(self) -> List[Dict[str, float]]:
+        """Run FreeSASA and return per-residue RSA entries."""
+        try:
+            import freesasa
+        except ImportError:
+            print("Warning: FreeSASA not installed. Install with: pip install freesasa")
+            return []
+
+        try:
+            structure = freesasa.Structure(self.pdb_file)
+        except Exception as e:
+            print(f"Warning: Could not load PDB into FreeSASA for {self.pdb_id}: {e}")
+            return []
+
+        try:
+            try:
+                parameters = freesasa.Parameters({'algorithm': 'lee-richards'})
+            except Exception:
+                parameters = freesasa.Parameters()
+            result = freesasa.calc(structure, parameters)
+        except Exception as e:
+            print(f"Warning: FreeSASA calculation failed for {self.pdb_id}: {e}")
+            return []
+
+        residue_areas = result.residueAreas()
+        rsa_entries: List[Dict[str, float]] = []
+
+        for chain_id, chain_residues in residue_areas.items():
+            try:
+                chain = (chain_id or '').strip() or 'A'
+            except Exception:
+                chain = 'A'
+
+            for _, area in chain_residues.items():
+                try:
+                    resname_raw = (getattr(area, 'residueType', '') or '').strip().upper()
+                    resname_norm = resname_raw
+                    if resname_norm not in TIEN_RSA_MAX and resname_norm in ALT_RESNAME_MAP:
+                        resname_norm = ALT_RESNAME_MAP[resname_norm]
+
+                    asa_total = float(area.total)
+                    asa_max = TIEN_RSA_MAX.get(resname_norm)
+                    if asa_max is None or asa_max <= 0:
+                        asa_max = float(np.mean(list(TIEN_RSA_MAX.values())))
+
+                    rsa = float(np.clip(asa_total / asa_max, 0.0, 1.0))
+
+                    resnum_label = str(getattr(area, 'residueNumber', '')).strip()
+                    insertion_code = ''
+                    # residueNumber may already include insertion code, but ensure uppercase
+                    if resnum_label:
+                        resnum_label = resnum_label.upper()
+
+                    resnum_digits = ''.join(ch for ch in resnum_label if (ch.isdigit() or ch == '-' or ch == '+'))
+                    resnum_int = None
+                    if resnum_digits and any(ch.isdigit() for ch in resnum_digits):
+                        try:
+                            resnum_int = int(resnum_digits)
+                        except ValueError:
+                            resnum_int = None
+
+                    rsa_entries.append({
+                        'chain_id': chain,
+                        'resname': resname_norm,
+                        'resname_original': resname_raw,
+                        'resnum': resnum_label,
+                        'resnum_int': resnum_int,
+                        'rsa': rsa,
+                        'sasa': asa_total,
+                        'insertion_code': insertion_code
+                    })
+                except Exception:
+                    continue
+
+        if rsa_entries:
+            print(f"✓ Computed FreeSASA for {len(rsa_entries)} residues ({self.pdb_id})")
+
+        return rsa_entries
+
+    def _expand_rsa_entries(self, entries: List[Dict[str, float]]) -> Dict:
+        """Expand cached FreeSASA entries into lookup dictionary."""
+        rsa_dict: Dict = {}
+        for entry in entries:
+            try:
+                chain = entry.get('chain_id', 'A')
+                rsa_val = float(entry.get('rsa', 0.0))
+                resnum_label = entry.get('resnum')
+                resnum_int = entry.get('resnum_int')
+
+                keys = set()
+                if resnum_label:
+                    keys.add((chain, resnum_label))
+                    keys.add((chain.upper(), resnum_label))
+                    keys.add((chain.lower(), resnum_label))
+                    keys.add((resnum_label,))
+                if resnum_int is not None:
+                    keys.add((chain, resnum_int))
+                    keys.add((chain.upper(), resnum_int))
+                    keys.add((chain.lower(), resnum_int))
+                    keys.add((resnum_int,))
+
+                for key in keys:
+                    rsa_dict[key] = rsa_val
+            except Exception:
+                continue
+
+        return rsa_dict
     
     def _is_compute_node(self) -> bool:
         """
@@ -856,31 +1079,380 @@ class Epi4AbDataProcessor:
         
         return None
     
-    def calculate_partial_charges(self, residue):
+    def calculate_partial_charges(self, residue, cache_dir: Optional[str] = None):
         """
-        Calculate partial charges using PDB2PQR
-        This is a simplified version - in practice, you'd call PDB2PQR
+        Calculate partial charges using PDB2PQR.
+        
+        HPC-aware implementation:
+        1. Check cache first (works on compute nodes, from pre-computed results)
+        2. Try local PDB2PQR tool (works on both compute and login nodes if installed)
+        3. Cache results for future use (especially important for compute nodes)
+        
+        Args:
+            residue: MDAnalysis residue object
+            cache_dir: Optional directory to cache PDB2PQR results (persistent across runs)
+            
+        Returns:
+            float: Total charge for the residue (sum of atomic charges), or 0.0 if calculation fails
         """
+        # Initialize charge cache if not already done
+        if not hasattr(self, '_charge_cache'):
+            self._charge_cache = {}
+            self._charge_cache_initialized = False
+        
+        # Run PDB2PQR and parse results on first call
+        if not self._charge_cache_initialized:
+            try:
+                # PRIORITY 1: Check cache first (works on compute nodes, avoids re-running PDB2PQR)
+                cache_file = None
+                if cache_dir:
+                    cache_path = Path(cache_dir)
+                    cache_path.mkdir(parents=True, exist_ok=True)
+                    cache_file = cache_path / f"{self.pdb_id}_pdb2pqr_charges.json"
+                
+                charge_dict = None
+                if cache_file and cache_file.exists():
+                    try:
+                        with open(cache_file, 'r') as f:
+                            cached_data = json.load(f)
+                            charge_dict = self._load_pdb2pqr_cache_entries(cached_data)
+                            if charge_dict:
+                                print(f"✓ Using cached PDB2PQR charge results for {self.pdb_id}")
+                                self._pdb2pqr_cache_hits = len(charge_dict)
+                    except Exception as e:
+                        print(f"Warning: Could not read PDB2PQR cache: {e}")
+                
+                # PRIORITY 2: Run PDB2PQR if cache not available
+                if not charge_dict:
+                    charge_dict = self._run_pdb2pqr_and_parse(cache_file)
+                    if charge_dict:
+                        self._pdb2pqr_calculations = len(charge_dict)
+                    else:
+                        self._pdb2pqr_calculations = 0
+                else:
+                    # Cache was used, ensure tracking is set
+                    if not hasattr(self, '_pdb2pqr_cache_hits'):
+                        self._pdb2pqr_cache_hits = len(charge_dict)
+                
+                if charge_dict:
+                    self._charge_cache = charge_dict
+                    self._charge_cache_initialized = True
+                else:
+                    # If PDB2PQR fails, mark as initialized to avoid repeated attempts
+                    self._charge_cache_initialized = True
+                    print(f"Warning: PDB2PQR calculation failed for {self.pdb_id}, using default charge=0.0")
+            except Exception as e:
+                print(f"Warning: Error initializing PDB2PQR charge cache for {self.pdb_id}: {e}")
+                self._charge_cache_initialized = True
+        
+        # Look up charge value for this residue
         try:
-            # Simplified charge calculation based on residue type
-            # In practice, this would come from PDB2PQR output
-            res_name = residue.resname
+            # PDB2PQR uses chain ID and residue number
+            # Try multiple ways to get chain ID from MDAnalysis residue
+            chain_id = 'A'  # Default
+            if hasattr(residue, 'segid') and residue.segid:
+                chain_id = residue.segid
+            elif hasattr(residue, 'segment') and hasattr(residue.segment, 'segid'):
+                chain_id = residue.segment.segid
+            elif hasattr(residue, 'chainID'):
+                chain_id = residue.chainID
+            # Try to get from first atom in residue
+            elif len(residue.atoms) > 0:
+                atom = residue.atoms[0]
+                if hasattr(atom, 'segid') and atom.segid:
+                    chain_id = atom.segid
+                elif hasattr(atom, 'chainID'):
+                    chain_id = atom.chainID
             
-            # Basic charge assignment
-            if res_name in ['ARG', 'LYS']:
-                charge = 1.0  # Positive
-            elif res_name in ['ASP', 'GLU']:
-                charge = -1.0  # Negative
-            elif res_name == 'HIS':
-                charge = 0.5  # Partially positive
-            else:
-                charge = 0.0  # Neutral
+            resnum = residue.resnum
             
-            return charge
+            # Try multiple lookup keys (PDB2PQR format variations)
+            lookup_keys = [
+                (chain_id, resnum),
+                (chain_id.upper(), resnum),
+                (chain_id.lower(), resnum),
+                (resnum,),  # Some formats only use resnum
+            ]
+            
+            for key in lookup_keys:
+                if key in self._charge_cache:
+                    return float(self._charge_cache[key])
+            
+            # If not found, return 0.0 (neutral charge or parsing issue)
+            return 0.0
             
         except Exception as e:
-            print(f"Warning: Could not calculate partial charges for residue {residue.resnum}: {e}")
+            print(f"Warning: Could not retrieve charge for residue {residue.resnum}: {e}")
             return 0.0
+    
+    def _run_pdb2pqr_and_parse(self, cache_file: Optional[Path] = None) -> Dict:
+        """
+        Run PDB2PQR on the PDB file and parse the PQR output to extract charges.
+        
+        HPC-aware: Works on both compute and login nodes (PDB2PQR is a local tool).
+        Results are cached to disk if cache_file is provided.
+        
+        Args:
+            cache_file: Optional path to cache file for saving results
+        
+        Returns:
+            dict: Mapping of (chain_id, resnum) -> total residue charge, or empty dict if failed
+        """
+        import shutil
+        
+        # Check if PDB2PQR is available
+        pdb2pqr_cmd = shutil.which('pdb2pqr')
+        if not pdb2pqr_cmd:
+            # Try alternative names and common installation paths
+            for cmd in ['pdb2pqr', 'PDB2PQR', 'pdb2pqr30', '/usr/bin/pdb2pqr', '/usr/local/bin/pdb2pqr']:
+                if os.path.exists(cmd):
+                    pdb2pqr_cmd = cmd
+                    break
+        
+        if not pdb2pqr_cmd:
+            is_compute = self._is_compute_node()
+            print(f"Warning: PDB2PQR not found in PATH.")
+            if is_compute:
+                print(f"         Running on compute node - PDB2PQR must be pre-installed.")
+                print(f"         Install PDB2PQR on login node or contact system administrator.")
+            else:
+                print(f"         PDB2PQR can be downloaded from: https://github.com/Electrostatics/pdb2pqr")
+                print(f"         Install and add to PATH, or pre-compute charges on login node.")
+            return {}
+        
+        try:
+            # Create temporary directory for PDB2PQR output
+            temp_dir = Path(tempfile.mkdtemp(prefix=f'pdb2pqr_{self.pdb_id}_'))
+            pdb_basename = Path(self.pdb_file).stem
+            
+            # Copy PDB file to temp directory
+            temp_pdb = temp_dir / f"{pdb_basename}.pdb"
+            shutil.copy2(self.pdb_file, temp_pdb)
+            
+            # Output PQR file path
+            pqr_file = temp_dir / f"{pdb_basename}.pqr"
+            
+            # Run PDB2PQR
+            # PDB2PQR command: pdb2pqr --ff <forcefield> <input_pdb> <output_pqr>
+            # Forcefield options: parse, amber, charmm, etc. Using PARSE as default (common for proteins)
+            forcefield = 'PARSE'
+            result = subprocess.run(
+                [pdb2pqr_cmd, '--ff', forcefield, '--keep-chain', str(temp_pdb), str(pqr_file)],
+                cwd=str(temp_dir),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=600  # 10 minute timeout (PDB2PQR can be slower than FreeSASA)
+            )
+            
+            if result.returncode != 0:
+                print(f"Warning: PDB2PQR failed with return code {result.returncode}")
+                print(f"         stderr: {result.stderr[:500]}")
+                # Try without --keep-chain flag (older versions may not support it)
+                print(f"         Retrying without --keep-chain flag...")
+                result = subprocess.run(
+                    [pdb2pqr_cmd, '--ff', forcefield, str(temp_pdb), str(pqr_file)],
+                    cwd=str(temp_dir),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=600
+                )
+            
+            if result.returncode != 0 and forcefield != 'AMBER':
+                # Retry once more with AMBER forcefield (commonly available)
+                print(f"Warning: PDB2PQR retry also failed with PARSE; attempting with AMBER forcefield...")
+                result = subprocess.run(
+                    [pdb2pqr_cmd, '--ff', 'AMBER', str(temp_pdb), str(pqr_file)],
+                    cwd=str(temp_dir),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=600
+                )
+                if result.returncode != 0:
+                    print(f"Warning: PDB2PQR retry also failed")
+                    return {}
+            
+            # Parse PQR file
+            if not pqr_file.exists():
+                print(f"Warning: PDB2PQR output file not found: {pqr_file}")
+                return {}
+            
+            charge_dict = self._parse_pdb2pqr_pqr(pqr_file)
+            
+            # Cache results to disk for future use (especially important for compute nodes)
+            if charge_dict and cache_file:
+                try:
+                    cache_entries = self._prepare_pdb2pqr_cache_entries(charge_dict)
+                    with open(cache_file, 'w') as f:
+                        json.dump(cache_entries, f)
+                    print(f"✓ Cached PDB2PQR charge results for {self.pdb_id} to {cache_file}")
+                except Exception as e:
+                    print(f"Warning: Could not cache PDB2PQR results: {e}")
+            
+            # Clean up temp directory
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception:
+                pass  # Ignore cleanup errors
+            
+            return charge_dict
+            
+        except subprocess.TimeoutExpired:
+            print(f"Warning: PDB2PQR timed out after 10 minutes for {self.pdb_id}")
+            return {}
+        except Exception as e:
+            print(f"Warning: Error running PDB2PQR for {self.pdb_id}: {e}")
+            return {}
+    
+    def _parse_pdb2pqr_pqr(self, pqr_file: Path) -> Dict:
+        """
+        Parse PDB2PQR PQR output file to extract charges per residue.
+        
+        PQR format:
+        ATOM      1  N   MET A   1      20.154  16.967  15.672  0.0000  1.7500
+        Format: ATOM serial name resname chain resnum x y z charge radius
+        
+        Charges are summed per residue to get total residue charge.
+        
+        Args:
+            pqr_file: Path to PQR file
+            
+        Returns:
+            dict: Mapping of (chain_id, resnum) -> total residue charge
+        """
+        charge_dict = {}
+        
+        try:
+            with open(pqr_file, 'r') as f:
+                lines = f.readlines()
+            
+            # Parse ATOM records
+            for line in lines:
+                line = line.strip()
+                
+                # Skip non-ATOM lines
+                if not line.startswith('ATOM') and not line.startswith('HETATM'):
+                    continue
+                
+                # Parse ATOM line
+                # PDB/PQR format is fixed-width:
+                # ATOM  serial name resname chain resnum    x       y       z    charge  radius
+                # 0-6   6-11 12-16 17-20  21    22-26   30-38  38-46  46-54  54-62  62-70
+                # Example: ATOM      1  N   MET A   1      20.154  16.967  15.672  0.0000  1.7500
+                try:
+                    # Try fixed-width parsing first (more reliable for PDB format)
+                    if len(line) >= 70:
+                        # Fixed-width format
+                        chain_id = line[21:22].strip() or 'A'
+                        resnum_str = line[22:26].strip()
+                        charge_str = line[54:62].strip()
+                    else:
+                        # Fallback to space-separated parsing
+                        parts = line.split()
+                        if len(parts) < 11:
+                            continue
+                        chain_id = parts[4] if len(parts) > 4 else 'A'
+                        resnum_str = parts[5] if len(parts) > 5 else '1'
+                        charge_str = parts[9] if len(parts) > 9 else '0.0'
+                    
+                    # Parse residue number (handle insertion codes like "1A")
+                    resnum = int(''.join(filter(str.isdigit, resnum_str))) if resnum_str else 1
+                    
+                    # Parse charge
+                    charge = float(charge_str) if charge_str else 0.0
+                    
+                    # Sum charges per residue
+                    key = (chain_id.upper(), resnum)
+                    if key not in charge_dict:
+                        charge_dict[key] = 0.0
+                    charge_dict[key] += charge
+                    
+                    # Also store with lowercase chain ID and resnum-only for flexible lookup
+                    charge_dict[(chain_id.lower(), resnum)] = charge_dict[key]
+                    charge_dict[(resnum,)] = charge_dict[key]  # Fallback
+                    
+                except (ValueError, IndexError) as e:
+                    # Skip malformed lines
+                    continue
+            
+            if charge_dict:
+                # Count unique residues (chain,resnum pairs)
+                unique_residues = set()
+                for k in charge_dict.keys():
+                    if isinstance(k, tuple) and len(k) == 2:
+                        chain = str(k[0]).upper()
+                        try:
+                            resnum = int(k[1])
+                        except (TypeError, ValueError):
+                            continue
+                        unique_residues.add((chain, resnum))
+                print(f"✓ Parsed {len(unique_residues)} residues from PDB2PQR PQR file")
+            
+            return charge_dict
+            
+        except Exception as e:
+            print(f"Warning: Error parsing PDB2PQR PQR file {pqr_file}: {e}")
+            return {}
+    
+    def _prepare_pdb2pqr_cache_entries(self, charge_dict: Dict) -> List[Dict[str, float]]:
+        """Convert charge cache dictionary to JSON-serializable list of entries."""
+        entries: List[Dict[str, float]] = []
+        seen = set()
+        
+        for key, value in charge_dict.items():
+            if isinstance(key, tuple) and len(key) == 2:
+                chain_id, resnum = key
+                canonical = (str(chain_id).upper(), int(resnum))
+                if canonical in seen:
+                    continue
+                seen.add(canonical)
+                entries.append({
+                    'chain_id': canonical[0],
+                    'resnum': canonical[1],
+                    'charge': float(value)
+                })
+        
+        return entries
+    
+    def _load_pdb2pqr_cache_entries(self, cached_data) -> Dict:
+        """Reconstruct charge cache dictionary from cached JSON data."""
+        charge_dict: Dict = {}
+        
+        if isinstance(cached_data, list):
+            for entry in cached_data:
+                chain_id = str(entry.get('chain_id', 'A')).strip() or 'A'
+                resnum = entry.get('resnum')
+                charge = entry.get('charge', 0.0)
+                try:
+                    resnum_int = int(resnum)
+                except Exception:
+                    continue
+                
+                canonical = (chain_id.upper(), resnum_int)
+                charge_val = float(charge)
+                charge_dict[canonical] = charge_val
+                charge_dict[(chain_id.lower(), resnum_int)] = charge_val
+                charge_dict[(resnum_int,)] = charge_val
+        elif isinstance(cached_data, dict):
+            # Backwards compatibility with previous cache format
+            for key, value in cached_data.items():
+                if isinstance(key, list):
+                    tuple_key = tuple(key)
+                elif isinstance(key, str) and ',' in key:
+                    parts = key.split(',')
+                    tuple_key = (parts[0], int(parts[1]))
+                else:
+                    tuple_key = key
+                try:
+                    charge_dict[tuple_key] = float(value)
+                except Exception:
+                    continue
+        else:
+            return {}
+        
+        return charge_dict
     
     def _load_esm2_model(self):
         """
@@ -984,9 +1556,18 @@ class Epi4AbDataProcessor:
     
     def extract_node_features(self) -> pd.DataFrame:
         """
-        Extract node features for each antigen residue according to Epi4Ab methodology
+        Extract node features for all antigen residues according to Epi4Ab methodology.
+        Includes logging for FreeSASA/PDB2PQR feature usage.
         """
         print(f"Extracting node features for {self.pdb_id}...")
+        
+        # Initialize feature usage tracking (must be done before any feature calculations)
+        self._rsa_cache_hits = 0
+        self._rsa_calculations = 0
+        self._pdb2pqr_cache_hits = 0
+        self._pdb2pqr_calculations = 0
+        self._rsa_values = []
+        self._charge_values = []
         
         # Get antigen residues (auto-detected)
         antigen = self.antigen_ca
@@ -1015,8 +1596,16 @@ class Epi4AbDataProcessor:
             atom_count = self.atom_counts.get(res_name, 0)
             
             # Calculate structural features
-            rsa = self.calculate_rsa(residue)
-            partial_charge = self.calculate_partial_charges(residue)
+            rsa = self.calculate_rsa(residue, cache_dir=str(self.output_dir / "rsa_cache"))
+            partial_charge = self.calculate_partial_charges(residue, cache_dir=str(self.output_dir / "pdb2pqr_cache"))
+            
+            # Track feature values for statistics (ensure lists are initialized)
+            if not hasattr(self, '_rsa_values'):
+                self._rsa_values = []
+            if not hasattr(self, '_charge_values'):
+                self._charge_values = []
+            self._rsa_values.append(rsa)
+            self._charge_values.append(partial_charge)
             phi, psi, omega, chi = self.calculate_dihedral_angles(residue)
             
             # Calculate relative depth
@@ -1060,16 +1649,51 @@ class Epi4AbDataProcessor:
             angle_nan = 1 if np.isnan(phi) or np.isnan(psi) or np.isnan(omega) else 0
             chi_nan = 1 if np.isnan(chi) else 0
             
-            # Create feature row matching Epi4Ab v1.0.2 format exactly
+            # Chemical property flags (one-hot encoding)
+            negative = 1 if res_name in ['ASP', 'GLU'] else 0
+            positive = 1 if res_name in ['ARG', 'LYS', 'HIS'] else 0
+            polar = 1 if res_name in ['ASN', 'GLN', 'SER', 'THR', 'TYR', 'CYS'] else 0
+            hydrophobic = 1 if res_name in ['ALA', 'VAL', 'ILE', 'LEU', 'MET', 'PHE', 'TRP'] else 0
+            neutral = 1 if res_name in ['GLY', 'PRO'] else 0
+            hydroxyl = 1 if res_name in ['SER', 'THR', 'TYR'] else 0
+            sulfur = 1 if res_name in ['CYS', 'MET'] else 0
+            carboxyl = 1 if res_name in ['ASP', 'GLU'] else 0
+            amino = 1 if res_name in ['LYS', 'ARG'] else 0
+            heterocyclic = 1 if res_name in ['HIS', 'TRP', 'PRO'] else 0
+            benzene = 1 if res_name in ['PHE', 'TYR', 'TRP'] else 0
+            imino = 1 if res_name == 'PRO' else 0
+            
+            # Create feature row matching Epi4Ab format with all required attributes
             feature_row = {
                 'resId': res_id,  # Note: resId not residue_id
                 'resShort': res_short,  # One-letter amino acid code
+                'sasa': rsa,  # Relative Solvent Accessibility (FreeSASA normalized by Tien et al. maxima)
                 'resDepth': depth,
                 'caDepth': depth,
+                'charge': partial_charge,  # Charge from PDB2PQR
                 'psi': psi if not np.isnan(psi) else 0.0,
                 'phi': phi if not np.isnan(phi) else 0.0,
                 'omega': omega if not np.isnan(omega) else 0.0,
                 'chi': chi if not np.isnan(chi) else 0.0,
+                'angleNan': angle_nan,
+                'chiNan': chi_nan,
+                'weight': res_weight,  # Molecular weight
+                'volume': res_volume,  # Residue volume
+                'hydrophobicity': hydrophobicity,  # Kyte-Doolittle scale
+                'atomNumber': atom_count,  # Number of atoms
+                'pI': isoelectric_point,  # Isoelectric point
+                'negative': negative,  # Chemical property flags
+                'positive': positive,
+                'polar': polar,
+                'hydrophobic': hydrophobic,
+                'neutral': neutral,
+                'hydroxyl': hydroxyl,
+                'sulfur': sulfur,
+                'carboxyl': carboxyl,
+                'amino': amino,
+                'heterocyclic': heterocyclic,
+                'benzene': benzene,
+                'imino': imino,
                 'aac': aac,
                 'cc': cc,
                 'H1_len': h1_len,
@@ -1079,9 +1703,7 @@ class Epi4AbDataProcessor:
                 'L2_len': l2_len,
                 'L3_len': l3_len,
                 'H3_score': h3_score,
-                'L1_score': l1_score,
-                'angleNan': angle_nan,
-                'chiNan': chi_nan
+                'L1_score': l1_score
             }
             
             # Add VH family one-hot encoding
@@ -1108,6 +1730,19 @@ class Epi4AbDataProcessor:
             feature_row['VL_unk'] = 0
             
             features.append(feature_row)
+        
+        # Log feature usage statistics
+        if len(self._rsa_values) > 0:
+            non_zero_rsa = sum(1 for v in self._rsa_values if v > 0.0)
+            print(f"  FreeSASA RSA: {non_zero_rsa}/{len(self._rsa_values)} residues with non-zero RSA")
+            print(f"    Cache hits: {getattr(self, '_rsa_cache_hits', 0)}, Calculations: {getattr(self, '_rsa_calculations', 0)}")
+            print(f"    RSA stats: min={min(self._rsa_values):.4f}, max={max(self._rsa_values):.4f}, mean={np.mean(self._rsa_values):.4f}")
+        
+        if len(self._charge_values) > 0:
+            non_zero_charge = sum(1 for v in self._charge_values if abs(v) > 1e-6)
+            print(f"  PDB2PQR Charge: {non_zero_charge}/{len(self._charge_values)} residues with non-zero charge")
+            print(f"    Cache hits: {getattr(self, '_pdb2pqr_cache_hits', 0)}, Calculations: {getattr(self, '_pdb2pqr_calculations', 0)}")
+            print(f"    Charge stats: min={min(self._charge_values):.4f}, max={max(self._charge_values):.4f}, mean={np.mean(self._charge_values):.4f}")
         
         return pd.DataFrame(features)
     
@@ -1215,6 +1850,22 @@ class Epi4AbDataProcessor:
                 'resId': res_id,  # Note: resId not residue_id
                 'isInterface': label  # Note: isInterface not label
             })
+        
+        # Log label distribution
+        label_counts = {}
+        for label_row in labels:
+            label_val = label_row['isInterface']
+            label_counts[label_val] = label_counts.get(label_val, 0) + 1
+        
+        total_labels = len(labels)
+        if total_labels > 0:
+            print(f"  Label distribution for {self.pdb_id}:")
+            print(f"    Label 0 (Non-epitope):     {label_counts.get(0, 0):4d} ({label_counts.get(0, 0)/total_labels*100:5.2f}%)")
+            print(f"    Label 1 (CIPS):            {label_counts.get(1, 0):4d} ({label_counts.get(1, 0)/total_labels*100:5.2f}%)")
+            print(f"    Label 2 (BepiPred/Ellipro): {label_counts.get(2, 0):4d} ({label_counts.get(2, 0)/total_labels*100:5.2f}%)")
+            
+            if label_counts.get(1, 0) == 0:
+                print(f"    ⚠️  Warning: No CIPS labels found - check antibody chain detection")
         
         return pd.DataFrame(labels)
     
@@ -1448,8 +2099,8 @@ class Epi4AbDataProcessor:
                 continue
             source_residue = antigen_residues[source_idx]
             target_residue = antigen_residues[target_idx]
-            source_charge = self.calculate_partial_charges(source_residue)
-            target_charge = self.calculate_partial_charges(target_residue)
+            source_charge = self.calculate_partial_charges(source_residue, cache_dir=str(self.output_dir / "pdb2pqr_cache"))
+            target_charge = self.calculate_partial_charges(target_residue, cache_dir=str(self.output_dir / "pdb2pqr_cache"))
             
             charge_attrs.append({
                 'source': source_idx,
@@ -1512,6 +2163,15 @@ class Epi4AbDataProcessor:
                 print(f"  - Epitope labels: {len(epitope_labels)} residues")
                 print(f"  - Graph edges: 0 connections")
                 print(f"  - Antigen sequence: {len(antigen_sequence)} residues (from {seq_source})")
+                
+                # Feature usage summary
+                if hasattr(self, '_rsa_values') and len(self._rsa_values) > 0:
+                    non_zero_rsa = sum(1 for v in self._rsa_values if v > 0.0)
+                    print(f"  - FreeSASA RSA: {non_zero_rsa}/{len(self._rsa_values)} non-zero values")
+                if hasattr(self, '_charge_values') and len(self._charge_values) > 0:
+                    non_zero_charge = sum(1 for v in self._charge_values if abs(v) > 1e-6)
+                    print(f"  - PDB2PQR Charge: {non_zero_charge}/{len(self._charge_values)} non-zero values")
+                
                 return True
             else:
                 # Normal processing with edges
@@ -1539,6 +2199,15 @@ class Epi4AbDataProcessor:
                 print(f"  - Epitope labels: {len(epitope_labels)} residues")
                 print(f"  - Graph edges: {len(graph_edges)} connections")
                 print(f"  - Antigen sequence: {len(antigen_sequence)} residues (from {seq_source})")
+                
+                # Feature usage summary
+                if hasattr(self, '_rsa_values') and len(self._rsa_values) > 0:
+                    non_zero_rsa = sum(1 for v in self._rsa_values if v > 0.0)
+                    print(f"  - FreeSASA RSA: {non_zero_rsa}/{len(self._rsa_values)} non-zero values")
+                if hasattr(self, '_charge_values') and len(self._charge_values) > 0:
+                    non_zero_charge = sum(1 for v in self._charge_values if abs(v) > 1e-6)
+                    print(f"  - PDB2PQR Charge: {non_zero_charge}/{len(self._charge_values)} non-zero values")
+                
                 return True
             
         except Exception as e:

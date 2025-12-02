@@ -70,8 +70,12 @@ def cleanup_old_logs(logs_dir: str = 'logs'):
         # Get modification dates
         files_with_dates = []
         for f in files:
-            mtime = datetime.fromtimestamp(f.stat().st_mtime)
-            files_with_dates.append((f, mtime.date(), mtime))
+            try:
+                mtime = datetime.fromtimestamp(f.stat().st_mtime)
+                files_with_dates.append((f, mtime.date(), mtime))
+            except (FileNotFoundError, OSError) as e:
+                # Skip files that were deleted or are inaccessible
+                continue
         
         # Separate files by date
         today_files = [(f, dt, mt) for f, dt, mt in files_with_dates if dt == today]

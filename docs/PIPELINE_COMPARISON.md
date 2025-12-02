@@ -127,7 +127,7 @@ All structural, dihedral, and IMGT gene family columns match (except for the ext
 
 ### High Priority
 1. **Add missing 19 columns to `node_feature.parquet`**
-   - Implement SASA calculation (using Naccess or MDAnalysis)
+   - Implement SASA calculation (using FreeSASA or MDAnalysis)
    - Add charge calculation
    - Add physical properties (weight, volume, hydrophobicity, atomNumber, pI)
    - Add chemical property flags (one-hot encoding)
@@ -158,9 +158,9 @@ All structural, dihedral, and IMGT gene family columns match (except for the ext
 
 ### SASA (Solvent Accessible Surface Area)
 ```python
-# Using MDAnalysis or Naccess
+# Using MDAnalysis or FreeSASA
 from MDAnalysis.analysis import distances
-# Or use Naccess tool if available
+# Or use FreeSASA tool (pip package) if available
 ```
 
 ### Charge
@@ -205,4 +205,5 @@ After implementing fixes, verify:
 4. ⏳ Add `node_list.parquet` generation
 5. ⏳ Test with official test set PDBs
 6. ⏳ Verify column order matches official format
+
 

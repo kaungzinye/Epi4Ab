@@ -55,3 +55,7 @@ processed/
 pdb_files/
 run_model_output/
 epitope_predictions_cache/
+dataset/
+final_trained_Epi4Ab/
+output_preprocess/
+output_inference/

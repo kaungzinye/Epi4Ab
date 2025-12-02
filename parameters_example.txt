@@ -45,8 +45,13 @@ filter_size=5
 epoch_number=2000
 batch_size=44
 # =======
-loss_function=cross_entropy
-cross_entropy_weight=10 35 20
+# RECOMMENDED: Use focal loss for extreme class imbalance (CIPS labels are <1% of residues)
+loss_function=focal
+focal_alpha=0.9784 0.0029 0.0187
+focal_gamma=2.0
+# Alternative: Standard cross entropy with class weights (less effective for extreme imbalance)
+# loss_function=cross_entropy
+# cross_entropy_weight=10 35 20
 attention_head=5
 dropout_edge_p=0.2
 #

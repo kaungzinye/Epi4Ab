@@ -229,10 +229,16 @@ def initiate_argument():
     # Loss function
     parser.add_argument('--loss_function', metavar='',
                         help='Select loss function',
-                        default='cross_entropy', type=str, choices=['cross_entropy','mse','hce'])
+                        default='cross_entropy', type=str, choices=['cross_entropy','mse','hce','focal'])
     parser.add_argument('--cross_entropy_weight', metavar='',
                         help='Add weight for cross entropy',
                         default=None, type=float, nargs=3)
+    parser.add_argument('--focal_alpha', metavar='',
+                        help='Alpha values for focal loss (class weights)',
+                        default=None, type=float, nargs=3)
+    parser.add_argument('--focal_gamma', metavar='',
+                        help='Gamma parameter for focal loss (focusing parameter)',
+                        default=2.0, type=float)
     parser.add_argument('--mse_threshold', metavar='',
                         help='Number of power of attribute',
                         default=0.75, type=float)
