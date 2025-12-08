@@ -35,7 +35,9 @@ if logging.save_not_as_statedict:
     model = torch.load(os.path.join(logging.directory_model_folder, 'model.pt'))
 else:
     model = choose_model(logging).to(logging.device)
-    model.load_state_dict(torch.load(os.path.join(logging.directory_model_folder, 'model.pt'), weights_only=True))
+    # Load model with CPU mapping if CUDA not available
+    map_location = 'cpu' if not torch.cuda.is_available() else None
+    model.load_state_dict(torch.load(os.path.join(logging.directory_model_folder, 'model.pt'), map_location=map_location, weights_only=True))
 model.to(logging.device)
 load_model_time = datetime.now() - load_model_start_time
 print(f'Loading model: {load_model_time}')

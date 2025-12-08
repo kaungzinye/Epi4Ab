@@ -68,5 +68,12 @@ for pdb_id in df.pdbID.values:
     join_attribute_dist.to_parquet(os.path.join(pdb_path, edge_attribute_dist_new_name))
     join_attribute_charge.to_parquet(os.path.join(pdb_path, edge_attribute_charge_new_name))
 
-    os.system(f'rm {os.path.join(pdb_path, '*_CA*')} {os.path.join(pdb_path, '*_CB*')} {os.path.join(pdb_path, '*-CA_*')} {os.path.join(pdb_path, '*-CB_*')}')
+    # Remove CA/CB-specific files (use double quotes inside f-string to avoid syntax error)
+    rm_patterns = [
+        os.path.join(pdb_path, '*_CA*'),
+        os.path.join(pdb_path, '*_CB*'),
+        os.path.join(pdb_path, '*-CA_*'),
+        os.path.join(pdb_path, '*-CB_*')
+    ]
+    os.system('rm ' + ' '.join(rm_patterns))
 
