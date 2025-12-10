@@ -9,3 +9,22 @@ parameters.txt
 .env
 **/pdb_list
 **/suggestion.py
+
+# HPC-specific generated files and directories
+tools/conda/
+tools/bin/
+tools/naccess/
+tools/miniconda.sh
+*.log
+logs/
+output_inference/
+validation_results_*.json
+sabdab_*.csv
+sabdab_*.tsv
+*.backup
+verify_env_structure.sh
+
+# Input data (keep structure, ignore large files)
+input/*.csv
+input/*.txt
+!input/.gitkeep
