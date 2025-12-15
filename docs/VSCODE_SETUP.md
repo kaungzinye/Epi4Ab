@@ -197,6 +197,151 @@ git checkout upstream-preprocess-test
 
 ---
 
+## SLURM Workflow (Required for Production)
+
+### Overview
+
+**IMPORTANT:** All preprocessing and inference tasks MUST be submitted via SLURM batch jobs. Direct script execution is NOT recommended for production use.
+
+**Why SLURM?**
+- Proper resource allocation and job scheduling
+- Automatic logging and error tracking
+- Isolation from login node (no internet needed on compute nodes)
+- Prevents timeout issues on long-running jobs
+
+### Login Node vs Compute Node
+
+| Feature | Login Node | Compute Node |
+|---------|-----------|--------------|
+| Internet Access | ✅ Yes | ❌ No |
+| Time Limit | Short (~minutes) | Long (hours) |
+| Resources | Limited | Full allocation |
+| Use Case | Download, submit jobs, quick tasks | Heavy computation |
+
+### Complete SLURM Workflow
+
+#### Step 1: Download PDBs (Login Node)
+
+Run on login node (has internet access):
+
+```bash
+cd /leonardo_work/AIFAC_F01_302/Epi4Ab
+./scripts/download_pdbs_login.sh
+```
+
+This downloads .cif files and creates lig.pdb files needed for preprocessing.
+
+#### Step 2: Submit Preprocessing Job (SLURM)
+
+Once downloads complete, submit preprocessing job:
+
+```bash
+sbatch slurm/preprocess_test3A.sbatch
+```
+
+Monitor job:
+```bash
+# Check job status
+squeue -u $USER
+
+# View live output
+tail -f logs/epi4ab-preprocess-test3A-JOBID.out
+
+# View errors
+tail -f logs/epi4ab-preprocess-test3A-JOBID.err
+```
+
+**Job Details:**
+- Time limit: 8 hours
+- Runs Steps 2-4: PDB2PQR, feature extraction, nodes/edges, fill edges
+- Output: Preprocessed data in `/leonardo_scratch/fast/AIFAC_F01_302/epi4ab/upstream_preprocess/`
+
+#### Step 3: Submit Inference Job (SLURM)
+
+After preprocessing completes, submit inference job:
+
+```bash
+sbatch slurm/inference_test3A.sbatch
+```
+
+**Job Details:**
+- Time limit: 2 hours
+- Runs inference on all preprocessed PDBs
+- Output: Results in `output_inference/` with timestamped directory
+
+#### Step 4: Generate Dashboard (Login Node)
+
+After inference completes, generate visualization dashboard:
+
+```bash
+# Find the latest inference output directory
+LATEST_OUTPUT=$(ls -td output_inference/20* | head -1)
+
+# Generate dashboard
+./scripts/generate_dashboard.sh $LATEST_OUTPUT/test_record
+```
+
+Dashboard will be saved as `$LATEST_OUTPUT/dashboard.html`
+
+### Available SLURM Scripts
+
+| Script | Purpose | Time Limit | Resources |
+|--------|---------|------------|-----------|
+| `slurm/preprocess_test3A.sbatch` | Preprocessing (Steps 2-4) | 8 hours | 8 CPUs, 32GB RAM |
+| `slurm/inference_test3A.sbatch` | Model inference | 2 hours | 4 CPUs, 16GB RAM |
+
+### Useful SLURM Commands
+
+```bash
+# Submit a job
+sbatch slurm/preprocess_test3A.sbatch
+
+# Check your jobs
+squeue -u $USER
+
+# Cancel a job
+scancel JOBID
+
+# View job details
+scontrol show job JOBID
+
+# View completed job info
+sacct -j JOBID --format=JobID,JobName,Partition,State,ExitCode,Elapsed
+
+# Check your account usage
+sacct -u $USER --starttime $(date -d '7 days ago' +%Y-%m-%d)
+```
+
+### Monitoring Job Progress
+
+```bash
+# Watch job queue
+watch -n 5 'squeue -u $USER'
+
+# Tail output logs (replace JOBID)
+tail -f logs/epi4ab-preprocess-test3A-JOBID.out
+
+# Check if preprocessing completed successfully
+ls /leonardo_scratch/fast/AIFAC_F01_302/epi4ab/upstream_preprocess/nodes_edges/
+
+# Count completed PDBs
+ls -d /leonardo_scratch/fast/AIFAC_F01_302/epi4ab/upstream_preprocess/nodes_edges/*/ | wc -l
+```
+
+### Warning about Direct Script Execution
+
+The following scripts have warnings and 5-second delays:
+- `run_preprocess.sh`
+- `run_preprocess_1n8z.sh`
+- `run_preprocess_test3A.sh`
+- `run_inference.sh`
+- `run_inference_1n8z.sh`
+- `run_inference_test3A.sh`
+
+**These are for development/testing only.** For production, always use SLURM.
+
+---
+
 ## Current Workspace State
 
 **Branch:** `upstream-preprocess-test`  

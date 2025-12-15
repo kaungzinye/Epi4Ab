@@ -105,6 +105,7 @@ def test_model(modelBuild, testData, testList, logging, testType:str='train', fo
         iter_desc = f'Testing {testType} pdbs, fold {foldInd}'
     record_data = []
     modelBuild.eval()
+    print(f"DEBUG: testType is {testType}, logging.train_all is {logging.train_all}")
     tqdm_enum = tqdm(zip(testList, testData), total=len(testList), desc = iter_desc, unit='pdb')
     if logging.loss_function in ['cross_entropy','hce']:
         for pdb, data in tqdm_enum:
@@ -125,6 +126,7 @@ def test_model(modelBuild, testData, testList, logging, testType:str='train', fo
                 cips_record_list = [pdb] + info_list + cips_record_list + [testType] + ['cips']
                 record_data.append(cips_record_list)
             if testType == 'test':
+                print(f"Calling record_test_pdb for {pdb} in {fold_folder}")
                 record_test_pdb(data, pred_y, soft_y, data.res_short, pdb, fold_folder, logging.plot_network, logging.networkx_seed)
       
     elif logging.loss_function == 'mse':

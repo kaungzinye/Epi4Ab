@@ -77,7 +77,9 @@ def gather_feature(pdb_df, logging):
         profile_dat[cdr_len_columns] = cdr_len_list
         
         cdr_score_columns = ['H3_score','L1_score']
-        profile_dat[cdr_score_columns] = filter_pdb[cdr_score_columns].astype(float).values.flatten().tolist()
+        # Handle 'nil' values by replacing with 0.0
+        cdr_scores = filter_pdb[cdr_score_columns].replace('nil', 0.0).astype(float).values.flatten().tolist()
+        profile_dat[cdr_score_columns] = cdr_scores
         # # merge interface
         # if logging.process_relaxed:
         #     interface_dat = pd.read_parquet(os.path.join(data_raw_path, 'interface', 'interface_result.parquet'))

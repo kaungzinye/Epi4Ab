@@ -3,7 +3,10 @@ from source_code.data_function.data_function import batch_list
 
 def process_data(logging):
     # NOTE need code for relaxed
+    print(f"Loading pdb list from: {logging.directory_pdb_list}")
     pdb_df = pd.read_csv(logging.directory_pdb_list)
+    print(f"Loaded DataFrame shape: {pdb_df.shape}")
+    print(f"Content: {pdb_df.head()}")
     # if logging.use_relaxed:
     #     pdb_df = pdb_df + '_re'
     #     with open(logging.directory_relaxed_sequence, 'r') as f:
@@ -54,6 +57,6 @@ def process_data(logging):
     test_data, new_pdb_list = batch_list(pdb_list, logging, batchType='test',
                         pretrained_tokenize=pretrained_tokenize, pretrained_model=pretrained_model,
                         ab_pretrained_model=ab_pretrained_model,
-                        prediction=True)
+                        prediction=False)
     # test_data = batch_list(pdb_list, logging, agDict, featureNameDict=logging.feature_name_dict, batchType='test')
     return test_data, new_pdb_list

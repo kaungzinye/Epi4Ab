@@ -12,14 +12,9 @@ sleep 5
 echo ""
 # ============================================================
 
-# Set environment variables
 set -o allexport && source .env && set +o allexport
-
-INPUT_AB_FEATURE=false # Switching to "true" if testing model with different VH/VL Ab family
-
-PARAMS=""
-[ "$INPUT_AB_FEATURE" = true ] && PARAMS+="--ab_feature_input " || PARAMS+=""
-
+export PDB_LIST_OVERRIDE="inference_list_1n8z.csv"
+export OMP_NUM_THREADS=1
 ./venv/bin/python epi_prediction.py $DIRECTORY_NODES_EDGES $DIRECTORY_PROCESSED_DATA \
-    $DIRECTORY_INFERENCE_PDB_LIST $FINAL_MODEL_FOLDER \
-    $DIRECTORY_INFERENCE_OUTPUT $PARAMS
+    $PDB_LIST_OVERRIDE $FINAL_MODEL_FOLDER \
+    $DIRECTORY_INFERENCE_OUTPUT
