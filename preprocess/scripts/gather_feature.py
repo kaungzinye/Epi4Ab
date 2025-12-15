@@ -6,8 +6,32 @@ import json
 from pathlib import Path
 
 def extract_ab_feature(pdb_fam, fam_dict, fam_columns):
+    """
+    One-hot encode VH/VL family with basic edge-case handling.
+
+    If the family name is missing or not found in fam_dict, we return an
+    all-zero vector instead of raising, so a single unexpected family
+    name does not break feature gathering for the whole PDB.
+    """
     fam_list = [0] * len(fam_columns)
-    fam_list[fam_columns.index(fam_dict[pdb_fam[0]])] = 1
+    if pdb_fam is None or len(pdb_fam) == 0:
+        return fam_list
+
+    fam = pdb_fam[0]
+    # Direct match
+    if fam in fam_dict:
+        fam_key = fam_dict[fam]
+    else:
+        # Try a few tolerant variants (common formatting differences)
+        fam_norm = fam.replace("IGHV0", "IGHV").replace("IGKV0", "IGKV").replace("IGLV0", "IGLV")
+        if fam_norm in fam_dict:
+            fam_key = fam_dict[fam_norm]
+        else:
+            # Unknown family: leave all zeros
+            return fam_list
+
+    if fam_key in fam_columns:
+        fam_list[fam_columns.index(fam_key)] = 1
     return fam_list
 
 def gather_feature(pdb_df, logging):
@@ -28,10 +52,14 @@ def gather_feature(pdb_df, logging):
         profile_lst = []
         for chain in structure[0]:
             for res in chain:
+                res_name = res.get_resname()
+                # Some structures may contain non-standard residue names.
+                # Fall back to 'X' for unknown residues instead of failing.
+                res_short = aa_profile['resShort'].get(res_name, 'X')
                 profile_lst.append({'pdbId':pdb_id,
                                     'chainId':chain.id,
-                                    'resName':res.get_resname(),
-                                    'resShort':aa_profile['resShort'][res.get_resname()],
+                                    'resName':res_name,
+                                    'resShort':res_short,
                                     'resId':res.id[1]})
         profile_dat = pd.DataFrame(profile_lst)
         profile_dat['resId'] = profile_dat['resId'].astype(int)
@@ -73,12 +101,19 @@ def gather_feature(pdb_df, logging):
         profile_dat[vhvl_columns['vl_fam']] = vl_list
 
         cdr_len_columns = ['H1_len', 'H2_len', 'H3_len', 'L1_len', 'L2_len', 'L3_len']
-        cdr_len_list = filter_pdb[cdr_len_columns].astype(int).values.flatten().tolist()
+        # Be defensive: coerce any non-numeric lengths to integers via pandas
+        cdr_len_df = filter_pdb[cdr_len_columns].apply(pd.to_numeric, errors='coerce')
+        cdr_len_df = cdr_len_df.fillna(0).astype(int)
+        cdr_len_list = cdr_len_df.values.flatten().tolist()
         profile_dat[cdr_len_columns] = cdr_len_list
         
         cdr_score_columns = ['H3_score','L1_score']
-        # Handle 'nil' values by replacing with 0.0
-        cdr_scores = filter_pdb[cdr_score_columns].replace('nil', 0.0).astype(float).values.flatten().tolist()
+        # Handle edge cases like 'nil', 'NA', empty strings etc. by coercing to 0.0
+        cdr_score_df = filter_pdb[cdr_score_columns].replace(
+            ['nil', 'NA', 'NaN', 'nan', ''], 0.0
+        )
+        cdr_score_df = cdr_score_df.apply(pd.to_numeric, errors='coerce').fillna(0.0)
+        cdr_scores = cdr_score_df.values.flatten().tolist()
         profile_dat[cdr_score_columns] = cdr_scores
         # # merge interface
         # if logging.process_relaxed:
