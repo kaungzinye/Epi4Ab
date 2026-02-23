@@ -38,7 +38,10 @@ def extract_cc_from_chain(chain, aa_profile):
     aa_arr = np.array(list(aa_dict.values()))
     for charge_type in charge_types:
         charge_arr = aa_arr * np.array(list(aa_profile[charge_type].values()))
-        charge_arr = charge_arr/sum(charge_arr)
+        denom = sum(charge_arr)
+        if denom == 0:
+            return {k: 0.0 for k in aa_dict}
+        charge_arr = charge_arr / denom
         assert not np.isnan(charge_arr).any(), f'''{aa_dict} 
 {charge_arr}'''
         all_charge_arr += charge_arr
@@ -73,8 +76,10 @@ def extract_cc(pdb_df, logging):
                 os.mkdir(output_path)
             df[['resName','chainId']] = df[['resName','chainId']].astype('string')
             df.to_parquet(os.path.join(output_path, 'cc_result.parquet'))
-        except:
+        except Exception as e:
             logging.error_charge_compostion.append(pdb_id)
+            if hasattr(logging, 'log_step_error'):
+                logging.log_step_error(pdb_id, 'extract_charge_composition', e)
     if not logging.error_charge_compostion:
         logging.message += '''
 All pdb charge composition have been extracted successfully.'''

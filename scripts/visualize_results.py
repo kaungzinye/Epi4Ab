@@ -120,10 +120,13 @@ def load_all_pdb_results(test_record_dir: str) -> Tuple[pd.DataFrame, List[str]]
             detailed = load_detailed_results(test_record_dir, pdb_id)
             final = load_final_results(test_record_dir, pdb_id)
             
-            # Merge to get residue names
+            # Merge to get residue names and probability
             merged = detailed.copy()
             merged['res_name'] = final['res_name']
             merged['score'] = final['score']
+            # Add probability column from final results (prob. column)
+            if 'prob.' in final.columns:
+                merged['prob.'] = final['prob.']
             merged['pdb_id'] = pdb_id
             
             all_data.append(merged)
@@ -138,7 +141,7 @@ def load_all_pdb_results(test_record_dir: str) -> Tuple[pd.DataFrame, List[str]]
 
 
 def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict:
-    """Compute classification metrics."""
+    """Compute classification metrics (3-class and binary epitope detection)."""
     # Get unique labels present in data
     labels = sorted(set(y_true) | set(y_pred))
     
@@ -168,6 +171,19 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict:
     metrics['macro_precision'] = precision_score(y_true, y_pred, average='macro', zero_division=0)
     metrics['macro_recall'] = recall_score(y_true, y_pred, average='macro', zero_division=0)
     
+    # Binary epitope detection metrics (combine Label 1 and Label 2 as "Epitope")
+    # 0 = Non-epitope, 1 or 2 = Epitope
+    y_true_binary = (y_true != 0).astype(int)  # 0=non-epitope, 1=epitope
+    y_pred_binary = (y_pred != 0).astype(int)
+    
+    metrics['binary'] = {
+        'confusion_matrix': confusion_matrix(y_true_binary, y_pred_binary, labels=[0, 1]),
+        'precision': precision_score(y_true_binary, y_pred_binary, zero_division=0),
+        'recall': recall_score(y_true_binary, y_pred_binary, zero_division=0),
+        'f1': f1_score(y_true_binary, y_pred_binary, zero_division=0),
+        'accuracy': accuracy_score(y_true_binary, y_pred_binary)
+    }
+    
     return metrics
 
 
@@ -191,7 +207,10 @@ def compute_per_pdb_metrics(df: pd.DataFrame, pdb_ids: List[str]) -> pd.DataFram
             'macro_f1': metrics['macro_f1'],
             'weighted_f1': metrics['weighted_f1'],
             'macro_precision': metrics['macro_precision'],
-            'macro_recall': metrics['macro_recall']
+            'macro_recall': metrics['macro_recall'],
+            'binary_f1': metrics['binary']['f1'],
+            'binary_precision': metrics['binary']['precision'],
+            'binary_recall': metrics['binary']['recall']
         })
     
     return pd.DataFrame(records)
@@ -217,6 +236,35 @@ def create_confusion_matrix_figure(cm: np.ndarray, labels: List[int]) -> go.Figu
     
     fig.update_layout(
         title='Confusion Matrix',
+        xaxis_title='Predicted Label',
+        yaxis_title='True Label',
+        height=400,
+        width=500
+    )
+    
+    return fig
+
+
+def create_binary_confusion_matrix_figure(cm: np.ndarray) -> go.Figure:
+    """Create an interactive binary confusion matrix heatmap (Non-epitope vs Epitope)."""
+    label_names = ['Non-epitope', 'Epitope']
+    
+    # Create text annotations
+    text = [[str(val) for val in row] for row in cm]
+    
+    fig = go.Figure(data=go.Heatmap(
+        z=cm,
+        x=label_names,
+        y=label_names,
+        text=text,
+        texttemplate="%{text}",
+        textfont={"size": 14},
+        colorscale='Greens',
+        hovertemplate='True: %{y}<br>Predicted: %{x}<br>Count: %{z}<extra></extra>'
+    ))
+    
+    fig.update_layout(
+        title='Binary Epitope Detection Confusion Matrix<br><sub>Label 1 (CIPS) and Label 2 (BepiPred) combined as "Epitope"</sub>',
         xaxis_title='Predicted Label',
         yaxis_title='True Label',
         height=400,
@@ -585,9 +633,14 @@ def create_aa_analysis(df: pd.DataFrame) -> go.Figure:
 
 def create_pdb_performance_heatmap(per_pdb_df: pd.DataFrame) -> go.Figure:
     """Create a heatmap showing performance metrics per PDB."""
-    # Prepare data
+    # Prepare data - include binary F1 if available
     metrics_cols = ['accuracy', 'macro_f1', 'weighted_f1', 'macro_precision', 'macro_recall']
     metric_names = ['Accuracy', 'Macro F1', 'Weighted F1', 'Macro Prec', 'Macro Recall']
+    
+    # Add binary F1 if column exists
+    if 'binary_f1' in per_pdb_df.columns:
+        metrics_cols.append('binary_f1')
+        metric_names.append('Binary F1 (Epitope)')
     
     # Replace NaN values with 0.0 to prevent empty cells
     z_data = per_pdb_df[metrics_cols].fillna(0.0).values
@@ -610,6 +663,44 @@ def create_pdb_performance_heatmap(per_pdb_df: pd.DataFrame) -> go.Figure:
         height=max(400, len(per_pdb_df) * 25 + 100),
         xaxis_title='Metric',
         yaxis_title='PDB ID'
+    )
+    
+    return fig
+
+
+def create_binary_metrics_table(binary_metrics: Dict) -> go.Figure:
+    """Create a binary epitope detection metrics table."""
+    headers = ['Metric', 'Value']
+    
+    # Build values as separate lists (one per column)
+    metric_names = ['Precision', 'Recall', 'F1-Score', 'Accuracy']
+    metric_values = [
+        f"{binary_metrics['precision']:.4f}",
+        f"{binary_metrics['recall']:.4f}",
+        f"{binary_metrics['f1']:.4f}",
+        f"{binary_metrics['accuracy']:.4f}"
+    ]
+    
+    fig = go.Figure(data=[go.Table(
+        header=dict(
+            values=headers,
+            fill_color='#3498db',
+            font=dict(color='white', size=14),
+            align='left'
+        ),
+        cells=dict(
+            values=[metric_names, metric_values],  # Two columns: names and values
+            fill_color=[['white', '#ecf0f1'] * (len(metric_names) // 2 + 1)][:len(metric_names)],
+            font=dict(size=13),
+            align='left',
+            height=35
+        )
+    )])
+    
+    fig.update_layout(
+        title='Binary Epitope Detection Metrics<br><sub>Combines Label 1 (CIPS) and Label 2 (BepiPred) as "Epitope"</sub>',
+        height=200,
+        width=400
     )
     
     return fig
@@ -660,20 +751,82 @@ def create_label_distribution_chart(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def create_binary_label_distribution_chart(df: pd.DataFrame) -> go.Figure:
+    """Create binary label distribution charts (Non-epitope vs Epitope)."""
+    fig = make_subplots(
+        rows=1, cols=2,
+        specs=[[{'type': 'pie'}, {'type': 'pie'}]],
+        subplot_titles=['True Binary Distribution', 'Predicted Binary Distribution']
+    )
+    
+    # Convert to binary: 0 = Non-epitope, 1 or 2 = Epitope
+    df_binary = df.copy()
+    df_binary['true_y_binary'] = (df_binary['true_y'] != 0).astype(int)
+    df_binary['pred_y_binary'] = (df_binary['pred_y'] != 0).astype(int)
+    
+    # True binary labels
+    true_binary_counts = df_binary['true_y_binary'].value_counts().sort_index()
+    true_labels = ['Non-epitope', 'Epitope']
+    true_colors = ['#808080', '#2ecc71']  # Grey for non-epitope, green for epitope
+    
+    fig.add_trace(
+        go.Pie(
+            labels=[true_labels[i] for i in true_binary_counts.index],
+            values=true_binary_counts.values,
+            hole=0.4,
+            marker_colors=[true_colors[i] for i in true_binary_counts.index],
+            textinfo='label+percent',
+            hovertemplate='%{label}<br>Count: %{value}<br>Percent: %{percent}<extra></extra>'
+        ),
+        row=1, col=1
+    )
+    
+    # Predicted binary labels
+    pred_binary_counts = df_binary['pred_y_binary'].value_counts().sort_index()
+    
+    fig.add_trace(
+        go.Pie(
+            labels=[true_labels[i] for i in pred_binary_counts.index],
+            values=pred_binary_counts.values,
+            hole=0.4,
+            marker_colors=[true_colors[i] for i in pred_binary_counts.index],
+            textinfo='label+percent',
+            hovertemplate='%{label}<br>Count: %{value}<br>Percent: %{percent}<extra></extra>'
+        ),
+        row=1, col=2
+    )
+    
+    fig.update_layout(
+        title='Binary Label Distribution (Non-epitope vs Epitope)<br><sub>Label 1 (CIPS) and Label 2 (BepiPred) combined as "Epitope"</sub>',
+        height=400
+    )
+    
+    return fig
+
+
 def create_score_distribution(df: pd.DataFrame) -> go.Figure:
-    """Create score distribution histogram."""
+    """Create probability distribution histogram.
+    
+    Shows the distribution of prediction probabilities (0-1) for each predicted label.
+    """
     fig = go.Figure()
     
-    # Check if score column exists and has valid data
-    if 'score' not in df.columns or df['score'].isna().all():
+    # Check if probability column exists (could be 'prob.' or 'prob_gt' or similar)
+    prob_col = None
+    for col in ['prob.', 'prob_gt', 'probability']:
+        if col in df.columns and not df[col].isna().all():
+            prob_col = col
+            break
+    
+    if prob_col is None:
         fig.add_annotation(
-            text="Score data not available",
+            text="Probability data not available",
             xref="paper", yref="paper",
             x=0.5, y=0.5, showarrow=False,
             font=dict(size=16, color='#7f8c8d')
         )
         fig.update_layout(
-            title='Score Distribution by Predicted Label',
+            title='Prediction Confidence Distribution by Predicted Label',
             height=400,
             xaxis=dict(visible=False),
             yaxis=dict(visible=False)
@@ -682,7 +835,7 @@ def create_score_distribution(df: pd.DataFrame) -> go.Figure:
     
     # Plot histogram for each label
     for label in sorted(df['pred_y'].unique()):
-        label_data = df[df['pred_y'] == label]['score'].dropna()
+        label_data = df[df['pred_y'] == label][prob_col].dropna()
         if len(label_data) > 0:
             fig.add_trace(
                 go.Histogram(
@@ -690,17 +843,40 @@ def create_score_distribution(df: pd.DataFrame) -> go.Figure:
                     name=LABEL_NAMES.get(label, str(label)),
                     marker_color=LABEL_COLORS.get(label, '#95a5a6'),
                     opacity=0.7,
-                    nbinsx=30  # Explicit bin count for better visualization
+                    nbinsx=30,  # Explicit bin count for better visualization
+                    hovertemplate='Probability: %{x:.3f}<br>Count: %{y}<extra></extra>'
                 )
             )
     
+    # Calculate summary statistics for annotation
+    all_probs = df[prob_col].dropna()
+    mean_prob = all_probs.mean()
+    median_prob = all_probs.median()
+    
+    # Count high/medium/low confidence predictions
+    high_conf = (all_probs >= 0.95).sum()
+    med_conf = ((all_probs >= 0.7) & (all_probs < 0.95)).sum()
+    low_conf = (all_probs < 0.7).sum()
+    total = len(all_probs)
+    
     fig.update_layout(
-        title='Score Distribution by Predicted Label',
-        xaxis_title='Score',
-        yaxis_title='Count',
+        title='Prediction Confidence Distribution by Predicted Label<br><sub>Shows how confident the model is for each prediction (0 = uncertain, 1 = very confident)</sub>',
+        xaxis_title='Prediction Probability (0 = uncertain, 1 = very confident)',
+        yaxis_title='Number of Residues',
+        xaxis=dict(range=[0, 1]),  # Fix range to 0-1 for probabilities
         barmode='overlay',
-        height=400,
-        showlegend=True
+        height=450,
+        showlegend=True,
+        annotations=[
+            dict(
+                text=f'Mean: {mean_prob:.3f} | Median: {median_prob:.3f} | High conf (≥0.95): {high_conf} ({100*high_conf/total:.1f}%) | Med conf (0.7-0.95): {med_conf} ({100*med_conf/total:.1f}%) | Low conf (<0.7): {low_conf} ({100*low_conf/total:.1f}%)',
+                xref='paper', yref='paper',
+                x=0.5, y=-0.18,
+                showarrow=False,
+                font=dict(size=10, color='#7f8c8d'),
+                align='center'
+            )
+        ]
     )
     
     return fig
@@ -752,22 +928,32 @@ def create_pdb_ranking_table(per_pdb_df: pd.DataFrame) -> go.Figure:
     """Create a sortable PDB ranking table."""
     sorted_df = per_pdb_df.sort_values('accuracy', ascending=False)
     
+    # Check if binary F1 column exists
+    has_binary = 'binary_f1' in sorted_df.columns
+    
+    headers = ['Rank', 'PDB ID', 'Residues', 'Accuracy', 'Macro F1', 'Weighted F1']
+    cell_values = [
+        list(range(1, len(sorted_df) + 1)),
+        sorted_df['pdb_id'].values,
+        sorted_df['n_residues'].values,
+        [f"{v:.4f}" for v in sorted_df['accuracy'].values],
+        [f"{v:.4f}" for v in sorted_df['macro_f1'].values],
+        [f"{v:.4f}" for v in sorted_df['weighted_f1'].values]
+    ]
+    
+    if has_binary:
+        headers.append('Binary F1 (Epitope)')
+        cell_values.append([f"{v:.4f}" for v in sorted_df['binary_f1'].values])
+    
     fig = go.Figure(data=[go.Table(
         header=dict(
-            values=['Rank', 'PDB ID', 'Residues', 'Accuracy', 'Macro F1', 'Weighted F1'],
+            values=headers,
             fill_color='#2c3e50',
             font=dict(color='white', size=12),
             align='center'
         ),
         cells=dict(
-            values=[
-                list(range(1, len(sorted_df) + 1)),
-                sorted_df['pdb_id'].values,
-                sorted_df['n_residues'].values,
-                [f"{v:.4f}" for v in sorted_df['accuracy'].values],
-                [f"{v:.4f}" for v in sorted_df['macro_f1'].values],
-                [f"{v:.4f}" for v in sorted_df['weighted_f1'].values]
-            ],
+            values=cell_values,
             fill_color=[['#ecf0f1', '#ffffff'] * (len(sorted_df) // 2 + 1)][:len(sorted_df)],
             font=dict(size=11),
             align='center',
@@ -775,8 +961,12 @@ def create_pdb_ranking_table(per_pdb_df: pd.DataFrame) -> go.Figure:
         )
     )])
     
+    title = 'PDB Performance Ranking (by Accuracy)'
+    if has_binary:
+        title += '<br><sub>Binary F1 combines Label 1 (CIPS) and Label 2 (BepiPred) as "Epitope"</sub>'
+    
     fig.update_layout(
-        title='PDB Performance Ranking (by Accuracy)',
+        title=title,
         height=max(300, len(sorted_df) * 30 + 100)
     )
     
@@ -847,11 +1037,25 @@ def generate_dashboard_html(
     )
     cm_fig.update_layout(height=450, width=600)
     
+    # Binary epitope detection confusion matrix
+    binary_cm_fig = create_binary_confusion_matrix_figure(
+        overall_metrics['binary']['confusion_matrix']
+    )
+    binary_cm_fig.update_layout(height=450, width=600)
+    
     metrics_table = create_metrics_table(overall_metrics)
     metrics_table.update_layout(height=400)
     
+    # Binary epitope detection metrics table
+    binary_metrics_table = create_binary_metrics_table(overall_metrics['binary'])
+    binary_metrics_table.update_layout(height=200, width=400)
+    
     label_dist = create_label_distribution_chart(df)
     label_dist.update_layout(height=450)
+    
+    # Binary label distribution
+    binary_label_dist = create_binary_label_distribution_chart(df)
+    binary_label_dist.update_layout(height=450)
     
     pdb_heatmap = create_pdb_performance_heatmap(per_pdb_df)
     # Already has dynamic height
@@ -880,8 +1084,11 @@ def generate_dashboard_html(
     
     # Convert figures to div-only HTML (not full HTML documents)
     cm_html = cm_fig.to_html(include_plotlyjs='cdn', full_html=False, div_id='confusion-matrix')
+    binary_cm_html = binary_cm_fig.to_html(include_plotlyjs=False, full_html=False, div_id='binary-confusion-matrix')
     metrics_html = metrics_table.to_html(include_plotlyjs=False, full_html=False, div_id='metrics-table')
+    binary_metrics_html = binary_metrics_table.to_html(include_plotlyjs=False, full_html=False, div_id='binary-metrics-table')
     label_html = label_dist.to_html(include_plotlyjs=False, full_html=False, div_id='label-distribution')
+    binary_label_html = binary_label_dist.to_html(include_plotlyjs=False, full_html=False, div_id='binary-label-distribution')
     heatmap_html = pdb_heatmap.to_html(include_plotlyjs=False, full_html=False, div_id='pdb-heatmap')
     ranking_html = pdb_ranking.to_html(include_plotlyjs=False, full_html=False, div_id='pdb-ranking')
     aa_html = aa_analysis.to_html(include_plotlyjs=False, full_html=False, div_id='aa-analysis')
@@ -992,7 +1199,10 @@ def generate_dashboard_html(
     </div>
     
     <div class="section">
-        <h2>Classification Performance</h2>
+        <h2>Classification Performance (3-Class)</h2>
+        <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+            Detailed classification metrics showing Label 0 (Non-epitope), Label 1 (CIPS), and Label 2 (BepiPred) separately.
+        </p>
         <div class="grid-2">
             {cm_html}
             {metrics_html}
@@ -1000,8 +1210,32 @@ def generate_dashboard_html(
     </div>
     
     <div class="section">
-        <h2>Label Distribution</h2>
+        <h2>Binary Epitope Detection Performance</h2>
+        <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+            Simplified binary classification combining Label 1 (CIPS) and Label 2 (BepiPred) into a single "Epitope" class. 
+            This view better evaluates overall epitope detection performance, where predicting Label 1 when truth is Label 2 
+            (or vice versa) is considered correct since both represent epitopes.
+        </p>
+        <div class="grid-2">
+            {binary_cm_html}
+            {binary_metrics_html}
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>Label Distribution (3-Class)</h2>
+        <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+            Distribution of Label 0 (Non-epitope), Label 1 (CIPS), and Label 2 (BepiPred) separately.
+        </p>
         {label_html}
+    </div>
+    
+    <div class="section">
+        <h2>Binary Label Distribution</h2>
+        <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+            Binary distribution combining Label 1 (CIPS) and Label 2 (BepiPred) as "Epitope" for easier comparison.
+        </p>
+        {binary_label_html}
     </div>
     
     <div class="section">
@@ -1016,7 +1250,18 @@ def generate_dashboard_html(
     </div>
     
     <div class="section">
-        <h2>Score Distribution</h2>
+        <h2>Prediction Confidence Distribution</h2>
+        <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+            This histogram shows the <strong>probability</strong> (0 to 1) that the model assigns to each prediction, 
+            grouped by the predicted label class. This tells you how confident the model is:
+            <ul style="margin: 10px 0; padding-left: 25px; color: #555;">
+                <li><strong>Probability close to 1.0</strong> (e.g., 0.95-1.0) = Very confident prediction</li>
+                <li><strong>Probability around 0.7-0.95</strong> = Moderately confident</li>
+                <li><strong>Probability below 0.7</strong> = Less confident, more uncertain</li>
+            </ul>
+            If most predictions have high probabilities (close to 1.0), the model is very confident overall. 
+            If many predictions have lower probabilities, the model is more uncertain about those cases.
+        </p>
         {score_html}
     </div>
     
@@ -1096,7 +1341,9 @@ def generate_individual_pdb_html(df: pd.DataFrame, pdb_id: str, vis_dir: Path):
     
     # Create all visualizations
     cm_fig = create_confusion_matrix_figure(pdb_metrics['confusion_matrix'], pdb_metrics['labels'])
+    binary_cm_fig = create_binary_confusion_matrix_figure(pdb_metrics['binary']['confusion_matrix'])
     label_dist = create_label_distribution_chart(pdb_data)
+    binary_label_dist = create_binary_label_distribution_chart(pdb_data)
     aa_analysis = create_aa_analysis(pdb_data)
     score_dist = create_score_distribution(pdb_data)
     
@@ -1106,7 +1353,10 @@ def generate_individual_pdb_html(df: pd.DataFrame, pdb_id: str, vis_dir: Path):
     
     # Convert figures to div-only HTML (not full HTML documents)
     cm_html = cm_fig.to_html(include_plotlyjs='cdn', full_html=False, div_id='confusion-matrix')
+    binary_cm_html = binary_cm_fig.to_html(include_plotlyjs=False, full_html=False, div_id='binary-confusion-matrix')
+    binary_metrics_html = create_binary_metrics_table(pdb_metrics['binary']).to_html(include_plotlyjs=False, full_html=False, div_id='binary-metrics-table')
     label_html = label_dist.to_html(include_plotlyjs=False, full_html=False, div_id='label-dist')
+    binary_label_html = binary_label_dist.to_html(include_plotlyjs=False, full_html=False, div_id='binary-label-dist')
     aa_html = aa_analysis.to_html(include_plotlyjs=False, full_html=False, div_id='aa-analysis')
     score_html = score_dist.to_html(include_plotlyjs=False, full_html=False, div_id='score-dist')
     full_html = pos_plot_full.to_html(include_plotlyjs=False, full_html=False, div_id='position-full')
@@ -1207,6 +1457,10 @@ def generate_individual_pdb_html(df: pd.DataFrame, pdb_id: str, vis_dir: Path):
                 <div class="metric-label">Weighted F1</div>
             </div>
             <div class="metric-card">
+                <div class="metric-value">{pdb_metrics['binary']['f1']:.3f}</div>
+                <div class="metric-label">Binary F1 (Epitope)</div>
+            </div>
+            <div class="metric-card">
                 <div class="metric-value">{len(pdb_data)}</div>
                 <div class="metric-label">Total Residues</div>
             </div>
@@ -1214,13 +1468,40 @@ def generate_individual_pdb_html(df: pd.DataFrame, pdb_id: str, vis_dir: Path):
     </div>
     
     <div class="section">
-        <h2>Confusion Matrix</h2>
+        <h2>Confusion Matrix (3-Class)</h2>
+        <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+            Detailed classification showing Label 0 (Non-epitope), Label 1 (CIPS), and Label 2 (BepiPred) separately.
+        </p>
         {cm_html}
     </div>
     
     <div class="section">
-        <h2>Label Distribution</h2>
+        <h2>Binary Epitope Detection</h2>
+        <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+            Simplified binary classification combining Label 1 (CIPS) and Label 2 (BepiPred) as "Epitope". 
+            This better evaluates overall epitope detection, where predicting Label 1 when truth is Label 2 
+            (or vice versa) is considered correct.
+        </p>
+        <div class="grid-2">
+            {binary_cm_html}
+            {binary_metrics_html}
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>Label Distribution (3-Class)</h2>
+        <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+            Distribution of Label 0 (Non-epitope), Label 1 (CIPS), and Label 2 (BepiPred) separately.
+        </p>
         {label_html}
+    </div>
+    
+    <div class="section">
+        <h2>Binary Label Distribution</h2>
+        <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+            Binary distribution combining Label 1 (CIPS) and Label 2 (BepiPred) as "Epitope".
+        </p>
+        {binary_label_html}
     </div>
     
     <div class="section">
@@ -1248,7 +1529,18 @@ def generate_individual_pdb_html(df: pd.DataFrame, pdb_id: str, vis_dir: Path):
     </div>
     
     <div class="section">
-        <h2>Score Distribution</h2>
+        <h2>Prediction Confidence Distribution</h2>
+        <p style="margin-bottom: 15px; color: #666; font-size: 14px;">
+            This histogram shows the <strong>probability</strong> (0 to 1) that the model assigns to each prediction, 
+            grouped by the predicted label class. This tells you how confident the model is:
+            <ul style="margin: 10px 0; padding-left: 25px; color: #555;">
+                <li><strong>Probability close to 1.0</strong> (e.g., 0.95-1.0) = Very confident prediction</li>
+                <li><strong>Probability around 0.7-0.95</strong> = Moderately confident</li>
+                <li><strong>Probability below 0.7</strong> = Less confident, more uncertain</li>
+            </ul>
+            If most predictions have high probabilities (close to 1.0), the model is very confident overall. 
+            If many predictions have lower probabilities, the model is more uncertain about those cases.
+        </p>
         {score_html}
     </div>
 </body>
@@ -1292,6 +1584,9 @@ def main():
         final = load_final_results(str(test_record_dir), args.pdb_id)
         detailed['res_name'] = final['res_name']
         detailed['score'] = final['score']
+        # Add probability column from final results
+        if 'prob.' in final.columns:
+            detailed['prob.'] = final['prob.']
         detailed['pdb_id'] = args.pdb_id
         df = detailed
         pdb_ids = [args.pdb_id]
@@ -1309,12 +1604,8 @@ def main():
     print(f"Overall Accuracy: {overall_metrics['accuracy']:.4f}")
     print(f"Macro F1: {overall_metrics['macro_f1']:.4f}")
     
-    # Generate dashboard
-    print("Generating dashboard...")
-    output_path = output_dir / 'dashboard.html'
-    generate_dashboard_html(df, pdb_ids, per_pdb_df, overall_metrics, output_path)
-    
-    # Generate individual PDB visualization files
+    # Generate individual PDB visualization files FIRST
+    # This must be done before generating the dashboard so links work correctly
     print("Generating individual PDB visualizations...")
     vis_dir = output_dir / 'visualizations'
     vis_dir.mkdir(exist_ok=True)
@@ -1325,6 +1616,12 @@ def main():
             print(f"  ✓ Generated {pdb_id}_probability_plot.html")
         except Exception as e:
             print(f"  ✗ Failed to generate visualization for {pdb_id}: {e}")
+    
+    # Generate dashboard AFTER individual visualizations
+    # This ensures the dashboard can link to the individual files
+    print("\nGenerating dashboard...")
+    output_path = output_dir / 'dashboard.html'
+    generate_dashboard_html(df, pdb_ids, per_pdb_df, overall_metrics, output_path)
     
     print(f"\nDashboard generation complete!")
     print(f"Open {output_path} in a web browser to view.")

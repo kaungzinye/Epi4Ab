@@ -17,7 +17,13 @@ class TrainModel:
                  train_all,
                  epoch_number,
                  device,
-                 torch_seed):
+                 torch_seed,
+                 optimizer_method=None,
+                 weight_decay=None,
+                 momentum=None,
+                 lr_pretrain=None,
+                 lr_finetune=None,
+                 freeze_gnn_epochs=0):
         self.modelBuild = None
         self.optimizer = None
         self.batch_size = batch_size
@@ -25,6 +31,12 @@ class TrainModel:
         self.epoch_number = epoch_number
         self.device = device
         self.torch_seed = torch_seed
+        self.optimizer_method = optimizer_method
+        self.weight_decay = weight_decay
+        self.momentum = momentum
+        self.lr_pretrain = lr_pretrain
+        self.lr_finetune = lr_finetune
+        self.freeze_gnn_epochs = freeze_gnn_epochs
         self.loss_function_name = loss_function
         self.loss_function = get_loss_function(loss_function, 
                                                cross_entropy_weight,
@@ -33,6 +45,23 @@ class TrainModel:
     def set_model(self, modelBuild, optimizer):
         self.modelBuild = modelBuild
         self.optimizer = optimizer
+
+    def _set_gnn_requires_grad(self, requires_grad: bool):
+        if not hasattr(self.modelBuild, 'layers'):
+            return
+        for param in self.modelBuild.layers.parameters():
+            param.requires_grad = requires_grad
+
+    def _reset_optimizer(self, learning_rate):
+        if self.optimizer_method is None:
+            return
+        params = filter(lambda p: p.requires_grad, self.modelBuild.parameters())
+        if self.optimizer_method == 'adam':
+            self.optimizer = torch.optim.Adam(params, lr=learning_rate, weight_decay=self.weight_decay)
+        elif self.optimizer_method == 'momentum':
+            self.optimizer = torch.optim.SGD(params, lr=learning_rate, weight_decay=self.weight_decay, momentum=self.momentum)
+        elif self.optimizer_method == 'sgd':
+            self.optimizer = torch.optim.SGD(params, lr=learning_rate, weight_decay=self.weight_decay)
 
     def process_modelling(self, data):
         data = data.to(self.device)
@@ -88,8 +117,17 @@ class TrainModel:
         torch.manual_seed(self.torch_seed)
         train_record = []
 
+        if self.freeze_gnn_epochs and self.freeze_gnn_epochs > 0:
+            self._set_gnn_requires_grad(False)
+            if self.lr_pretrain is not None:
+                self._reset_optimizer(self.lr_pretrain)
+
         if self.train_all in ['yes','with_validation']:
             for epoch in trange(self.epoch_number, desc = f'Training', unit='epoch'):
+                if self.freeze_gnn_epochs and epoch == self.freeze_gnn_epochs:
+                    self._set_gnn_requires_grad(True)
+                    if self.lr_finetune is not None:
+                        self._reset_optimizer(self.lr_finetune)
                 info_list = [epoch + 1]
                 train_loss = self.train_model(train_data, info_list)
                 train_record.extend(train_loss)
@@ -101,6 +139,10 @@ class TrainModel:
                 
         else:
             for epoch in trange(self.epoch_number, desc = f'Training fold {fold_ind + 1}', unit='epoch'):
+                if self.freeze_gnn_epochs and epoch == self.freeze_gnn_epochs:
+                    self._set_gnn_requires_grad(True)
+                    if self.lr_finetune is not None:
+                        self._reset_optimizer(self.lr_finetune)
                 info_list = [epoch + 1, fold_ind + 1]
                 train_loss = self.train_model(train_data, info_list)
                 train_record.extend(train_loss)
@@ -129,10 +171,17 @@ def process_training(train_data_raw, train_list_raw, logging, relaxed_train_data
                             logging.train_all,
                             logging.epoch_number,
                             logging.device,
-                            logging.torch_seed)
+                            logging.torch_seed,
+                            optimizer_method=logging.optimizer_method,
+                            weight_decay=logging.weight_decay,
+                            momentum=logging.momentum,
+                            lr_pretrain=logging.lr_pretrain,
+                            lr_finetune=logging.lr_finetune,
+                            freeze_gnn_epochs=logging.freeze_gnn_epochs)
     if logging.train_all in ['yes','with_validation']:
         model = choose_model(logging).to(logging.device)
-        optimizer = set_optimizer(model, logging)
+        optimizer_lr = logging.lr_pretrain if logging.freeze_gnn_epochs and logging.freeze_gnn_epochs > 0 else logging.learning_rate
+        optimizer = set_optimizer(model, logging, learning_rate=optimizer_lr)
         train_class.set_model(model, optimizer)
         if logging.train_all == 'with_validation':
             train_ind, validate_ind = train_test_split(range(len(train_list_raw)), test_size = 0.1, random_state = logging.sklearn_seed)
@@ -189,7 +238,8 @@ def process_training(train_data_raw, train_list_raw, logging, relaxed_train_data
                 train_data.extend(af_train_data_raw)
                 train_data_list.extend(adj_af_train_list)
             model = choose_model(logging).to(logging.device)
-            optimizer = set_optimizer(model, logging)
+            optimizer_lr = logging.lr_pretrain if logging.freeze_gnn_epochs and logging.freeze_gnn_epochs > 0 else logging.learning_rate
+            optimizer = set_optimizer(model, logging, learning_rate=optimizer_lr)
             train_class.set_model(model, optimizer)
             loss_record.extend(train_class.epoch_training(train_data, fold_ind, validate_data))
             evaluation_record.extend(test_model(model, train_data, train_data_list, logging, foldInd = fold_ind + 1))

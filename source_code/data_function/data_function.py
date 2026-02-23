@@ -30,7 +30,6 @@ def batch_list(pdbList, logging, featureNameDict={}, batchType=None, pretrained_
     logging.edge_attribute_file = 'edge_attribute_dist.parquet'
     logging.edge_attribute_charge_file = 'edge_attribute_charge.parquet'
     logging.edge_index_file = 'edge_index.parquet'
-    logging.node_label_file = 'node_label_pi.parquet'
 
     # Attribute
     calc_attribute = CalculateAttribute(logging.device,
@@ -70,10 +69,15 @@ def batch_list(pdbList, logging, featureNameDict={}, batchType=None, pretrained_
         edgeCharge = pd.read_parquet(os.path.join(pdb_folder, logging.edge_attribute_charge_file))
         assert not edgeCharge.empty, f'Edge attribute charge of pdb {pdbId} is empty.'
         if not prediction:
-            nodeLabel = pd.read_parquet(os.path.join(label_folder, logging.node_label_file)).astype(int)
+            nodeLabel = pd.read_parquet(os.path.join(label_folder, logging.node_label_file))
             assert ptypes.is_float_dtype(edgeAttribute['dist']), f'Attribute of pdb {pdbId} is not float.'
             # Label
-            label = torch.tensor(nodeLabel.isInterface.astype(int).to_numpy().T, dtype=torch.long)
+            if logging.target_type in ['seqitope','proteinmpnn']:
+                if logging.target_column not in nodeLabel.columns:
+                    raise KeyError(f'Target column "{logging.target_column}" not found in {logging.node_label_file}')
+                label = torch.tensor(nodeLabel[logging.target_column].to_numpy(), dtype=torch.float)
+            else:
+                label = torch.tensor(nodeLabel.isInterface.astype(int).to_numpy().T, dtype=torch.long)
         edgeAttribute = edgeAttribute.abs()
 
         # Edge

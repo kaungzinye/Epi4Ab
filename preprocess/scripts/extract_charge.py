@@ -26,8 +26,10 @@ def extract_charge(pdb_df, logging):
             charge_res_dat[['pdbId', 'resName', 'chainId']] = charge_res_dat[['pdbId', 'resName', 'chainId']].astype('string')
             charge_res_dat.to_parquet(os.path.join(out_folder, 'charge_result.parquet'))
             # charge_res_dat.to_csv(os.path.join(out_folder, 'charge_result.txt'), index = None)
-        except:
+        except Exception as e:
             logging.error_charge.append(pdb_id)
+            if hasattr(logging, 'log_step_error'):
+                logging.log_step_error(pdb_id, 'extract_charge', e)
 
     if not logging.error_charge:
         logging.message += '''

@@ -22,7 +22,8 @@ class GNNNaive(nn.Module):
                  use_base_model:bool,
                  normalizer,
                  use_deep_shallow,
-                 shallow_layer):
+                 shallow_layer,
+                 output_activation='identity'):
         '''
         Parameters:
             in_feature: input dimension
@@ -36,6 +37,7 @@ class GNNNaive(nn.Module):
         self.dropout_edge_p = dropout_edge_p
         self.gradient_attribute = gradient_attribute
         self.out_label = out_label
+        self.output_activation = output_activation
         layers_list = []
         num_layers = num_layers + 1
         channel_list = [in_feature] + hidden_channel
@@ -90,7 +92,10 @@ class GNNNaive(nn.Module):
             layers_list.append(block)
         self.layers = nn.ModuleList(layers_list)
         self.attribute_layer = nn.Linear(3,1, bias=gradient_attribute_with_bias)
-        if use_base_model:
+        self.use_linear_out = out_label == 1
+        if self.use_linear_out:
+            self.fc_out = nn.Linear(channel_list[hidden_channel_ind], out_label)
+        elif use_base_model:
             self.fc_out = GCNConv(channel_list[hidden_channel_ind], 
                                     out_label)
         else:
@@ -137,7 +142,12 @@ class GNNNaive(nn.Module):
             assert not x.isnan().any(), f'There is NaN value after sequential layer {x}'
         if self.use_norm:
             x = self.norm(x)
-        out = self.fc_out(x, edgeIndex, atb)
+        if self.use_linear_out:
+            out = self.fc_out(x)
+        else:
+            out = self.fc_out(x, edgeIndex, atb)
+        if self.out_label == 1 and self.output_activation == 'sigmoid':
+            out = torch.sigmoid(out)
         assert not out.isnan().any(), f'There is NaN value after fc_out {out}'
         return out
 
@@ -159,7 +169,8 @@ class GNNResNet(nn.Module):
                  gat_concat:bool,
                  normalizer,
                  use_deep_shallow,
-                 shallow_layer):
+                 shallow_layer,
+                 output_activation='identity'):
         '''
         Parameters:
             in_feature: input dimension
@@ -171,6 +182,7 @@ class GNNResNet(nn.Module):
         super(GNNResNet, self).__init__()
         self.gradient_attribute = gradient_attribute
         self.out_label = out_label
+        self.output_activation = output_activation
         self.initial_process = initial_process
         self.dropout_edge_p = dropout_edge_p
         layers_list = []
@@ -256,6 +268,8 @@ class GNNResNet(nn.Module):
         if self.use_norm:
             x = self.norm(x)
         out = self.fc_out(x)
+        if self.out_label == 1 and self.output_activation == 'sigmoid':
+            out = torch.sigmoid(out)
         assert not out.isnan().any(), f'There is NaN value after fc_out {out}'
         return out
     

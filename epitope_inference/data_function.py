@@ -57,6 +57,6 @@ def process_data(logging):
     test_data, new_pdb_list = batch_list(pdb_list, logging, batchType='test',
                         pretrained_tokenize=pretrained_tokenize, pretrained_model=pretrained_model,
                         ab_pretrained_model=ab_pretrained_model,
-                        prediction=False)
+                        prediction=False)  # Set to False to use ground truth labels (Label 1: CIPS)
     # test_data = batch_list(pdb_list, logging, agDict, featureNameDict=logging.feature_name_dict, batchType='test')
     return test_data, new_pdb_list

@@ -14,4 +14,8 @@ def initiate_argument():
                         help='flag to download pdb files',
                         action='store_true')
 
+    parser.add_argument('--autodetect_antigen_chain',
+                        help='Auto-detect antigen chain if metadata antigen chain appears antibody-like',
+                        action='store_true')
+
     return parser.parse_args()

@@ -7,14 +7,35 @@ __pycache__
 .DS_Store
 parameters.txt
 .env
+errors*.txt
+*.cif
+*.pdb
+*.parquet
+inference_list_*.csv
+filtered_summary.csv
+raw_ground_truth.csv
+sequences.txt
+session_log.md
+email_to_*.txt
+CLAUDE*.md
+EPI4AB_*.md
+SEQITOPE_*.md
+TOKEN_OPTIMIZATION_SETUP.md
+implementation_plan.md
+inspect_columns.py
+extract_metadata.py
+format_pdb_info.py
+verify_fix.py
 **/pdb_list
 **/suggestion.py
 
 # HPC-specific generated files and directories
+tools/
 tools/conda/
 tools/bin/
 tools/naccess/
 tools/miniconda.sh
+tools/proteinmpnn/ProteinMPNN/
 *.log
 logs/
 output_inference/
@@ -28,3 +49,5 @@ verify_env_structure.sh
 input/*.csv
 input/*.txt
 !input/.gitkeep
+
+# SLURM scripts are tracked; ignore only job outputs (logs/ handles most cases)

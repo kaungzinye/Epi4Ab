@@ -1,5 +1,7 @@
 import pandas as pd
 from datetime import datetime
+from pathlib import Path
+import pandas as pd
 from scripts.run_setup.arguments import initiate_argument
 from scripts.run_setup.logging import DataLogging
 from scripts.download_pdb import download_pdb, create_folder
@@ -23,6 +25,21 @@ create_folder(meta_df, logging)
 if logging.download_pdb:
     download_pdb(meta_df, logging)
     filter_pdb(meta_df, logging)
+
+# Ensure lig.pdb exists (chain extraction). This is required even when PDBs are pre-downloaded.
+# If --autodetect_antigen_chain is enabled, we may need to re-extract lig.pdb from CIF.
+if getattr(logging, 'autodetect_antigen_chain', False):
+    filter_pdb(meta_df, logging)
+else:
+    # Run extraction only when lig.pdb is missing for any PDB in metadata
+    needs = False
+    for pdb_id in meta_df.pdbID.values:
+        lig = Path(logging.directory_data) / pdb_id / 'lig.pdb'
+        if not lig.exists():
+            needs = True
+            break
+    if needs:
+        filter_pdb(meta_df, logging)
 run_pdb2pqr(meta_df, logging)
 extract_angle(meta_df, logging)
 extract_depth(meta_df, logging)

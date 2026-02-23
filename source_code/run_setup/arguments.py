@@ -70,8 +70,8 @@ def initiate_argument():
     #                     help='Using order 0 to 4, for 0 is interface',
     #                     action='store_true', default=True)
     parser.add_argument('--bias_distance', metavar='',
-                        help='Value for substracting distance of attribute',
-                        default=0, type=int)
+                         help='Value for substracting distance of attribute',
+                         default=0.0, type=float)
     parser.add_argument('--softmax_data',
                         help='Set softmax layer for data before training',
                         action='store_true')
@@ -82,6 +82,16 @@ def initiate_argument():
     parser.add_argument('--label_from_ellipro_pi',
                         help='Label for training from ElliPro result. True for PI, False for linear',
                         action='store_true')
+    # Targets
+    parser.add_argument('--target_type', metavar='',
+                        help='Training target type',
+                        default='interface', type=str, choices=['interface','seqitope','proteinmpnn'])
+    parser.add_argument('--target_file', metavar='',
+                        help='Target label parquet filename (per-PDB)',
+                        default='node_label_pi.parquet', type=str)
+    parser.add_argument('--target_column', metavar='',
+                        help='Target label column name',
+                        default='score', type=str)
     # Token
     parser.add_argument('--use_token',
                         help='Use token representing vh vl family',
@@ -183,6 +193,9 @@ def initiate_argument():
     parser.add_argument('--softmax_output',
                         help='Using softmax after model output',
                         action='store_true')
+    parser.add_argument('--output_activation',
+                        help='Output activation for regression head',
+                        default='sigmoid', type=str, choices=['sigmoid','identity'])
     parser.add_argument('--model_name', metavar='',
                         help='Select model. Please see the model script for selection',
                         default='GNNNaive', type=str, choices=['GNNNaive', 'GNNResNet', 'EpiObject','EpiRegion','EncoderGraph'])
@@ -266,6 +279,18 @@ def initiate_argument():
     parser.add_argument('--batch_size', metavar='',
                         help='Size of batch',
                         default=1, type=int)
+    parser.add_argument('--phase', metavar='',
+                        help='Training phase intent',
+                        default='pretrain', type=str, choices=['pretrain','finetune','both'])
+    parser.add_argument('--freeze_gnn_epochs', metavar='',
+                        help='Freeze GNN layers for initial epochs',
+                        default=0, type=int)
+    parser.add_argument('--lr_pretrain', metavar='',
+                        help='Learning rate for pretraining phase',
+                        default=None, type=float)
+    parser.add_argument('--lr_finetune', metavar='',
+                        help='Learning rate for finetuning phase',
+                        default=None, type=float)
     # Train attribute
     parser.add_argument('--gradient_attribute',
                         help='Adding gradient for attribute',

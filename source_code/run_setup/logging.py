@@ -43,6 +43,10 @@ class ModelLogging:
         self.error_data_process_list = []
         # Label
         self.label_from_ellipro_pi = args.label_from_ellipro_pi
+        self.target_type = args.target_type
+        self.target_file = args.target_file
+        self.target_column = args.target_column
+        self.node_label_file = args.target_file
         # pre-trained
         self.use_pretrained = True if args.feature_version == 'v1.0.1' else args.use_pretrained
         self.pretrained_model = args.pretrained_model if self.use_pretrained else None
@@ -103,6 +107,7 @@ class ModelLogging:
         self.use_base_model = args.use_base_model
         self.not_include_gat = args.not_include_gat
         self.softmax_output = args.softmax_output
+        self.output_activation = args.output_activation
         self.model_name = args.model_name
         self.object_model = True if self.model_name in ['EpiObject','EpiRegion'] else False
         self.model_block = args.model_block
@@ -134,6 +139,8 @@ class ModelLogging:
         self.block_norm_momentum = args.block_norm_momentum
         # Loss function
         self.loss_function = args.loss_function
+        if self.target_type in ['seqitope','proteinmpnn']:
+            assert self.loss_function == 'mse', f'Target type "{self.target_type}" requires loss_function="mse"'
         if args.cross_entropy_weight is not None:
             assert len(args.cross_entropy_weight) == args.out_label, f'Number of Cross entropy weight ({args.cross_entropy_weight}) and number of out label ({args.out_label}) should be equal.'
         self.cross_entropy_weight = args.cross_entropy_weight
@@ -146,6 +153,10 @@ class ModelLogging:
         self.epoch_number = args.epoch_number
         self.batch_size = args.batch_size
         self.train_all = args.train_all
+        self.phase = args.phase
+        self.freeze_gnn_epochs = args.freeze_gnn_epochs
+        self.lr_pretrain = args.lr_pretrain if args.lr_pretrain is not None else self.learning_rate
+        self.lr_finetune = args.lr_finetune if args.lr_finetune is not None else self.learning_rate
         # Train attribute
         self.gradient_attribute = args.gradient_attribute
         self.gradient_attribute_with_bias = args.gradient_attribute_with_bias
@@ -163,6 +174,8 @@ class ModelLogging:
             self.evaluation_columns = ["Global Score Percent", "Local Score Percent", "Cosine Similarity", "Pairwise Score Percent"]
         else:
             self.evaluation_columns = ["Recall","Precision","f1","Accuracy","ROC AUC","Average Precision"]
+        if self.loss_function == 'mse':
+            self.evaluation_columns = ["MSE"]
         # GPU
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         # directory
@@ -233,6 +246,10 @@ Code version: {self.code_version}
 | Use Relaxed data | {self.use_relaxed} |
 | Use Alpha Fold data | {self.use_alphafold} |
 | Use pre-trained | {self.use_pretrained} |'''
+        message += f'''
+| Target type | {self.target_type} |
+| Target file | {self.target_file} |
+| Target column | {self.target_column} |'''
         if self.use_pretrained:
             message += f'''
 | Pre-trained model name | {self.pretrained_model} |
@@ -287,6 +304,7 @@ Code version: {self.code_version}
 | Model code | {self.model_name} |
 | Model description | {self.model_description} |
 | Softmax output | {self.softmax_output} |
+| Output activation | {self.output_activation} |
 | Number of input features | {self.in_feature} |
 | Number of hidden channels | {self.hidden_channel} |
 | Number of out labels | {self.out_label} |
@@ -343,6 +361,11 @@ Code version: {self.code_version}
 | Number of epoches | {self.epoch_number} |
 | Batch size | {self.batch_size} |
 | Train all data | {self.train_all} |'''
+        message += f'''
+| Phase | {self.phase} |
+| Freeze GNN epochs | {self.freeze_gnn_epochs} |
+| LR pretrain | {self.lr_pretrain} |
+| LR finetune | {self.lr_finetune} |'''
         if self.edge_type == 'dist':
             message += f'''
 | Gradient Attribute | {self.gradient_attribute} |'''

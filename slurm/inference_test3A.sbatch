@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=epi4ab-inference-test3A
-#SBATCH --account=AIFAC_F01_302
+#SBATCH --account=EUHPC_D29_035
 #SBATCH --partition=boost_usr_prod
 #SBATCH --qos=normal
 #SBATCH --time=02:00:00
@@ -8,15 +8,15 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
-#SBATCH --output=/leonardo_work/AIFAC_F01_302/Epi4Ab/logs/%x-%j.out
-#SBATCH --error=/leonardo_work/AIFAC_F01_302/Epi4Ab/logs/%x-%j.err
+#SBATCH --output=/leonardo_work/EUHPC_D29_035/Epi4Ab/logs/%x-%j.out
+#SBATCH --error=/leonardo_work/EUHPC_D29_035/Epi4Ab/logs/%x-%j.err
 
 set -euo pipefail
 
 module purge
 module load python/3.11.7
 
-PROJ=/leonardo_work/AIFAC_F01_302/Epi4Ab
+PROJ=/leonardo_work/EUHPC_D29_035/Epi4Ab
 cd "$PROJ"
 
 # Use the virtualenv for dependencies
@@ -37,7 +37,7 @@ INFERENCE_LIST="$PROJ/inference_list_test3A.csv"
 if [ ! -f "$INFERENCE_LIST" ]; then
     echo "Creating inference list from metadata..."
     # Use metadata_complete.csv for 12 complete PDBs
-    METADATA_FILE="/leonardo_scratch/fast/AIFAC_F01_302/epi4ab/upstream_preprocess/metadata_complete.csv"
+METADATA_FILE="/leonardo_scratch/fast/EUHPC_D29_035/epi4ab/upstream_preprocess/metadata_complete.csv"
     head -1 "$METADATA_FILE" | sed 's/pdbID/pdbId/' > "$INFERENCE_LIST"
     tail -n +2 "$METADATA_FILE" | cut -d',' -f1 >> "$INFERENCE_LIST"
 fi
@@ -66,7 +66,50 @@ mkdir -p logs
 # Set OMP threads for performance
 export OMP_NUM_THREADS=4
 
+# Validate inference inputs before running
+echo "=========================================="
+echo "Validating inference inputs"
+echo "Started: $(date)"
+echo "=========================================="
+
+# Parse model config
+CONFIG_FILE="/tmp/validation_config_${SLURM_JOB_ID}.json"
+if [ -d "$FINAL_MODEL_FOLDER" ]; then
+    python scripts/parse_model_config.py --model_dir "$FINAL_MODEL_FOLDER" --output "$CONFIG_FILE" 2>/dev/null || true
+fi
+
+# Run validation for each PDB
+VALIDATION_PASSED=true
+while IFS= read -r pdb_id; do
+    if [ -z "$pdb_id" ] || [ "$pdb_id" = "pdbId" ]; then
+        continue
+    fi
+    echo ""
+    echo "Validating $pdb_id..."
+    if ! python scripts/validate_pipeline.py \
+        --pdb_id "$pdb_id" \
+        --nodes_edges_dir "$DIRECTORY_NODES_EDGES" \
+        --processed_dir "$DIRECTORY_PROCESSED_DATA" \
+        --step inference_inputs \
+        --config "$CONFIG_FILE" 2>&1; then
+        VALIDATION_PASSED=false
+    fi
+done < <(tail -n +2 "$INFERENCE_LIST")
+
+if [ "$VALIDATION_PASSED" = false ]; then
+    echo ""
+    echo "ERROR: Validation failed. Please fix issues before running inference."
+    echo "Check the validation output above for details."
+    rm -f "$CONFIG_FILE"
+    exit 1
+fi
+
+echo ""
+echo "✓ All validation checks passed"
+rm -f "$CONFIG_FILE"
+
 # Run inference
+echo ""
 echo "=========================================="
 echo "Running inference"
 echo "Started: $(date)"
@@ -95,6 +138,36 @@ if [ -n "$OUTPUT_DIR" ]; then
         echo "  Results generated: $RESULT_COUNT / $TOTAL_PDBS PDBs"
         ls -1 "$OUTPUT_DIR/test_record/"*_final_result.txt 2>/dev/null | sed 's/.*\//  ✓ /' | sed 's/_final_result.txt//'
     fi
+    
+    # Validate inference outputs
+    echo ""
+    echo "=========================================="
+    echo "Validating inference outputs"
+    echo "=========================================="
+    
+    # Parse model config to determine required files
+    CONFIG_FILE="$OUTPUT_DIR/validation_config.json"
+    if [ -d "$FINAL_MODEL_FOLDER" ]; then
+        python scripts/parse_model_config.py --model_dir "$FINAL_MODEL_FOLDER" --output "$CONFIG_FILE" 2>/dev/null || true
+    fi
+    
+    # Run validation
+    if [ -f "$CONFIG_FILE" ]; then
+        python scripts/validate_pipeline.py \
+            --output_dir "$OUTPUT_DIR" \
+            --inference_list "$INFERENCE_LIST" \
+            --nodes_edges_dir "$DIRECTORY_NODES_EDGES" \
+            --step inference_outputs \
+            --config "$CONFIG_FILE" || echo "Validation completed with warnings/errors (see above)"
+    else
+        # Run without config (will use defaults)
+        python scripts/validate_pipeline.py \
+            --output_dir "$OUTPUT_DIR" \
+            --inference_list "$INFERENCE_LIST" \
+            --nodes_edges_dir "$DIRECTORY_NODES_EDGES" \
+            --step inference_outputs || echo "Validation completed with warnings/errors (see above)"
+    fi
+    
     echo ""
     echo "Next step: Generate dashboard on login node"
     echo "  cd $PROJ"

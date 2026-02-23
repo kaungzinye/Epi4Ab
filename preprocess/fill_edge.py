@@ -32,48 +32,55 @@ edge_attribute_charge_new_name = 'edge_attribute_charge.parquet'
 
 ########################## Run all ###############################
 df = pd.read_csv(args.directory_metadata)
+err_path = os.path.join(args.directory_nodes_edges, 'errors_fill_edge.txt')
+ferr = open(err_path, 'a', encoding='utf-8')
+
 for pdb_id in df.pdbID.values:
-    pdb_path = os.path.join(args.directory_nodes_edges, pdb_id)
-    node_feature = pd.read_parquet(os.path.join(pdb_path, node_feature_name))
+    try:
+        pdb_path = os.path.join(args.directory_nodes_edges, pdb_id)
+        node_feature = pd.read_parquet(os.path.join(pdb_path, node_feature_name))
 
-    # Load CB and CA edge data
-    cb_edge_index = pd.read_parquet(os.path.join(pdb_path, cb_edge_index_name))
-    cb_edge_attribute_dist = pd.read_parquet(os.path.join(pdb_path, cb_edge_attribute_dist_name))
-    cb_edge_attribute_charge = pd.read_parquet(os.path.join(pdb_path, cb_edge_attribute_charge_name))
+        # Load CB and CA edge data
+        cb_edge_index = pd.read_parquet(os.path.join(pdb_path, cb_edge_index_name))
+        cb_edge_attribute_dist = pd.read_parquet(os.path.join(pdb_path, cb_edge_attribute_dist_name))
+        cb_edge_attribute_charge = pd.read_parquet(os.path.join(pdb_path, cb_edge_attribute_charge_name))
 
-    ca_edge_index = pd.read_parquet(os.path.join(pdb_path, ca_edge_index_name))
-    ca_edge_attribute_dist = pd.read_parquet(os.path.join(pdb_path, ca_edge_attribute_dist_name))
-    ca_edge_attribute_charge = pd.read_parquet(os.path.join(pdb_path, ca_edge_attribute_charge_name))
+        ca_edge_index = pd.read_parquet(os.path.join(pdb_path, ca_edge_index_name))
+        ca_edge_attribute_dist = pd.read_parquet(os.path.join(pdb_path, ca_edge_attribute_dist_name))
+        ca_edge_attribute_charge = pd.read_parquet(os.path.join(pdb_path, ca_edge_attribute_charge_name))
 
-    # Find missing node indices in CB edges
-    missing_index_src = [i for i in node_feature.index if i not in cb_edge_index.source.values]
-    missing_index_tgt = [i for i in node_feature.index if i not in cb_edge_index.target.values]
+        # Find missing node indices in CB edges
+        missing_index_src = [i for i in node_feature.index if i not in cb_edge_index.source.values]
+        missing_index_tgt = [i for i in node_feature.index if i not in cb_edge_index.target.values]
 
-    # Fill missing edges from CA edges
-    fill_src_df = ca_edge_index[ca_edge_index.source.isin(missing_index_src)]
-    fill_tgt_df = ca_edge_index[ca_edge_index.target.isin(missing_index_tgt)]
-    fill_missing_index_src = fill_src_df.index
-    fill_missing_index_tgt = fill_tgt_df.index
-    fill_df = pd.concat([fill_src_df, fill_tgt_df]).drop_duplicates()
-    fill_index = fill_missing_index_src.union(fill_missing_index_tgt)
+        # Fill missing edges from CA edges
+        fill_src_df = ca_edge_index[ca_edge_index.source.isin(missing_index_src)]
+        fill_tgt_df = ca_edge_index[ca_edge_index.target.isin(missing_index_tgt)]
+        fill_missing_index_src = fill_src_df.index
+        fill_missing_index_tgt = fill_tgt_df.index
+        fill_df = pd.concat([fill_src_df, fill_tgt_df]).drop_duplicates()
+        fill_index = fill_missing_index_src.union(fill_missing_index_tgt)
 
-    join_edge_index = pd.concat([cb_edge_index, fill_df])
-    join_attribute_dist = pd.concat([cb_edge_attribute_dist, ca_edge_attribute_dist.iloc[fill_index]])
-    join_attribute_charge = pd.concat([cb_edge_attribute_charge, ca_edge_attribute_charge.iloc[fill_index]])
-    
-    assert join_edge_index.shape[0] == join_attribute_dist.shape[0]
-    assert join_edge_index.shape[0] == join_attribute_charge.shape[0]
+        join_edge_index = pd.concat([cb_edge_index, fill_df])
+        join_attribute_dist = pd.concat([cb_edge_attribute_dist, ca_edge_attribute_dist.iloc[fill_index]])
+        join_attribute_charge = pd.concat([cb_edge_attribute_charge, ca_edge_attribute_charge.iloc[fill_index]])
 
-    join_edge_index.to_parquet(os.path.join(pdb_path, edge_index_new_name))
-    join_attribute_dist.to_parquet(os.path.join(pdb_path, edge_attribute_dist_new_name))
-    join_attribute_charge.to_parquet(os.path.join(pdb_path, edge_attribute_charge_new_name))
+        if join_edge_index.shape[0] != join_attribute_dist.shape[0] or join_edge_index.shape[0] != join_attribute_charge.shape[0]:
+            raise RuntimeError('Edge/attribute row count mismatch')
 
-    # Remove CA/CB-specific files (use double quotes inside f-string to avoid syntax error)
-    rm_patterns = [
-        os.path.join(pdb_path, '*_CA*'),
-        os.path.join(pdb_path, '*_CB*'),
-        os.path.join(pdb_path, '*-CA_*'),
-        os.path.join(pdb_path, '*-CB_*')
-    ]
-    os.system('rm ' + ' '.join(rm_patterns))
+        join_edge_index.to_parquet(os.path.join(pdb_path, edge_index_new_name))
+        join_attribute_dist.to_parquet(os.path.join(pdb_path, edge_attribute_dist_new_name))
+        join_attribute_charge.to_parquet(os.path.join(pdb_path, edge_attribute_charge_new_name))
 
+        # Remove CA/CB-specific files
+        rm_patterns = [
+            os.path.join(pdb_path, '*_CA*'),
+            os.path.join(pdb_path, '*_CB*'),
+            os.path.join(pdb_path, '*-CA_*'),
+            os.path.join(pdb_path, '*-CB_*')
+        ]
+        os.system('rm ' + ' '.join(rm_patterns))
+    except Exception as e:
+        ferr.write(f'{pdb_id} - {type(e).__name__}: {e}\n')
+
+ferr.close()

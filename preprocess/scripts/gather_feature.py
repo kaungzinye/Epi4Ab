@@ -48,7 +48,14 @@ def gather_feature(pdb_df, logging):
         filter_pdb = pdb_df[pdb_df.pdbID == pdb_id]
         data_path = os.path.join(logging.directory_data, pdb_id)
         pdb_file = os.path.join(data_path, 'lig.pdb')
-        structure = parser.get_structure(pdb_id, pdb_file)
+        missing_any = False
+
+        try:
+            structure = parser.get_structure(pdb_id, pdb_file)
+        except Exception:
+            if pdb_id not in logging.error_gather:
+                logging.error_gather.append(pdb_id)
+            continue
         profile_lst = []
         for chain in structure[0]:
             for res in chain:
@@ -64,32 +71,92 @@ def gather_feature(pdb_df, logging):
         profile_dat = pd.DataFrame(profile_lst)
         profile_dat['resId'] = profile_dat['resId'].astype(int)
 
-        # mere depth
-        depth_dat = pd.read_parquet(os.path.join(data_path,'depth', 'depth_result.parquet'))
-        depth_dat['resId'] = depth_dat['resId'].astype(int)
-        profile_dat = profile_dat.merge(depth_dat, how='left')
+        # merge depth (default to 0 if missing)
+        depth_path = os.path.join(data_path, 'depth', 'depth_result.parquet')
+        if os.path.exists(depth_path):
+            try:
+                depth_dat = pd.read_parquet(depth_path)
+                depth_dat['resId'] = depth_dat['resId'].astype(int)
+                profile_dat = profile_dat.merge(depth_dat, how='left')
+            except Exception:
+                profile_dat['resDepth'] = 0.0
+                profile_dat['caDepth'] = 0.0
+                missing_any = True
+        else:
+            profile_dat['resDepth'] = 0.0
+            profile_dat['caDepth'] = 0.0
+            missing_any = True
 
-        # merge charge
-        charge_dat = pd.read_parquet(os.path.join(data_path, 'charge', 'charge_result.parquet'))
-        charge_dat['resId'] = charge_dat['resId'].astype(int)
-        profile_dat = profile_dat.merge(charge_dat, how='left')
+        # merge charge (default to 0 if missing)
+        charge_path = os.path.join(data_path, 'charge', 'charge_result.parquet')
+        if os.path.exists(charge_path):
+            try:
+                charge_dat = pd.read_parquet(charge_path)
+                charge_dat['resId'] = charge_dat['resId'].astype(int)
+                profile_dat = profile_dat.merge(charge_dat, how='left')
+            except Exception:
+                profile_dat['charge'] = 0.0
+                missing_any = True
+        else:
+            profile_dat['charge'] = 0.0
+            missing_any = True
 
-        # merge angle
-        angle_dat = pd.read_parquet(os.path.join(data_path, 'angle', 'angle_result.parquet'))
-        angle_dat['resId'] = angle_dat['resId'].astype(int)
-        profile_dat = profile_dat.merge(angle_dat, how='left')
+        # merge angle (default to 0 if missing)
+        angle_path = os.path.join(data_path, 'angle', 'angle_result.parquet')
+        angle_defaults = {
+            'psi': 0.0,
+            'phi': 0.0,
+            'omega': 0.0,
+            'chi': 0.0,
+            'angleNan': 0,
+            'chiNan': 0,
+        }
+        if os.path.exists(angle_path):
+            try:
+                angle_dat = pd.read_parquet(angle_path)
+                angle_dat['resId'] = angle_dat['resId'].astype(int)
+                profile_dat = profile_dat.merge(angle_dat, how='left')
+            except Exception:
+                for k, v in angle_defaults.items():
+                    profile_dat[k] = v
+                missing_any = True
+        else:
+            for k, v in angle_defaults.items():
+                profile_dat[k] = v
+            missing_any = True
 
         # merge aa profile
         aa_dat = pd.DataFrame(aa_profile).reset_index(names='resName')
         profile_dat = profile_dat.merge(aa_dat, how='left')
 
-        # merge aac
-        aac_dat = pd.read_parquet(os.path.join(data_path, 'aac', 'aac_result.parquet'))
-        profile_dat = profile_dat.merge(aac_dat, how = 'left')
+        # merge aac (default to 0 if missing)
+        aac_path = os.path.join(data_path, 'aac', 'aac_result.parquet')
+        if os.path.exists(aac_path):
+            try:
+                aac_dat = pd.read_parquet(aac_path)
+                profile_dat = profile_dat.merge(aac_dat, how='left')
+            except Exception:
+                profile_dat['aac'] = 0.0
+                missing_any = True
+        else:
+            profile_dat['aac'] = 0.0
+            missing_any = True
 
-        # merge charge composition
-        cc_dat = pd.read_parquet(os.path.join(data_path, 'charge_composition', 'cc_result.parquet'))
-        profile_dat = profile_dat.merge(cc_dat, how = 'left')
+        # merge charge composition (default to 0 if missing)
+        cc_path = os.path.join(data_path, 'charge_composition', 'cc_result.parquet')
+        if os.path.exists(cc_path):
+            try:
+                cc_dat = pd.read_parquet(cc_path)
+                profile_dat = profile_dat.merge(cc_dat, how='left')
+            except Exception:
+                profile_dat['cc'] = 0.0
+                missing_any = True
+        else:
+            profile_dat['cc'] = 0.0
+            missing_any = True
+
+        if missing_any and pdb_id not in logging.error_gather:
+            logging.error_gather.append(pdb_id)
 
         # merge antibody feature
         vh_fam = filter_pdb['VH_fam'].values
@@ -100,18 +167,63 @@ def gather_feature(pdb_df, logging):
         profile_dat[vhvl_columns['vh_fam']] = vh_list
         profile_dat[vhvl_columns['vl_fam']] = vl_list
 
+        # If any of the upstream feature merges produced NaNs, prefer a stable
+        # numeric default (0) over propagating NaNs into node features.
+        numeric_defaults = [
+            'resDepth', 'caDepth', 'charge',
+            'psi', 'phi', 'omega', 'chi', 'angleNan', 'chiNan',
+            'aac', 'cc',
+        ]
+        for col in numeric_defaults:
+            if col in profile_dat.columns:
+                profile_dat[col] = profile_dat[col].fillna(0)
+
         cdr_len_columns = ['H1_len', 'H2_len', 'H3_len', 'L1_len', 'L2_len', 'L3_len']
+        # Some metadata files (e.g. input/pdb_info_test3A.csv) do not include *_len columns.
+        # In that case, derive lengths from the corresponding CDR sequence columns.
+        if not set(cdr_len_columns).issubset(set(filter_pdb.columns)):
+            seq_map = {
+                'H1_len': 'H1_seq',
+                'H2_len': 'H2_seq',
+                'H3_len': 'H3_seq',
+                'L1_len': 'L1_seq',
+                'L2_len': 'L2_seq',
+                'L3_len': 'L3_seq',
+            }
+            derived = {}
+            for len_col, seq_col in seq_map.items():
+                if len_col in filter_pdb.columns:
+                    derived[len_col] = filter_pdb[len_col].values[0]
+                    continue
+                if seq_col in filter_pdb.columns:
+                    raw = filter_pdb[seq_col].values[0]
+                    seq = '' if pd.isna(raw) else str(raw).strip()
+                    # Treat short all-'A' placeholders (e.g. 'AAAA') as missing.
+                    if seq and set(seq.upper()) == {'A'} and len(seq) <= 6:
+                        derived[len_col] = 0
+                    else:
+                        derived[len_col] = len(seq)
+                else:
+                    derived[len_col] = 0
+            cdr_len_df = pd.DataFrame([derived], columns=cdr_len_columns)
+        else:
+            cdr_len_df = filter_pdb[cdr_len_columns]
+
         # Be defensive: coerce any non-numeric lengths to integers via pandas
-        cdr_len_df = filter_pdb[cdr_len_columns].apply(pd.to_numeric, errors='coerce')
+        cdr_len_df = cdr_len_df.apply(pd.to_numeric, errors='coerce')
         cdr_len_df = cdr_len_df.fillna(0).astype(int)
         cdr_len_list = cdr_len_df.values.flatten().tolist()
         profile_dat[cdr_len_columns] = cdr_len_list
         
         cdr_score_columns = ['H3_score','L1_score']
-        # Handle edge cases like 'nil', 'NA', empty strings etc. by coercing to 0.0
-        cdr_score_df = filter_pdb[cdr_score_columns].replace(
-            ['nil', 'NA', 'NaN', 'nan', ''], 0.0
-        )
+        # Some metadata files do not include score columns. Default to 0.0 in that case.
+        if not set(cdr_score_columns).issubset(set(filter_pdb.columns)):
+            cdr_score_df = pd.DataFrame([{c: 0.0 for c in cdr_score_columns}], columns=cdr_score_columns)
+        else:
+            # Handle edge cases like 'nil', 'NA', empty strings etc. by coercing to 0.0
+            cdr_score_df = filter_pdb[cdr_score_columns].replace(
+                ['nil', 'NA', 'NaN', 'nan', ''], 0.0
+            )
         cdr_score_df = cdr_score_df.apply(pd.to_numeric, errors='coerce').fillna(0.0)
         cdr_scores = cdr_score_df.values.flatten().tolist()
         profile_dat[cdr_score_columns] = cdr_scores

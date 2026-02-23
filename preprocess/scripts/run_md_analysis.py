@@ -42,8 +42,10 @@ def extract_angle(pdb_df, logging):
                 chi1 = res.chi1_selection()
                 if chi1 is not None:
                     chi1 = chi1.dihedral.value()
-            except:
+            except Exception as e:
                 logging.error_angle.append(pdbId)
+                if hasattr(logging, 'log_step_error'):
+                    logging.log_step_error(pdbId, 'extract_angle', e)
             finalAngle.append([pdbId, res.segid, res.resname, res.resid , psi, phi, omega, chi1])
         finalAngle = pd.DataFrame(finalAngle, columns = ['pdbId', 'chainId', 'resName', 'resId','psi', 'phi', 'omega', 'chi'])
         finalAngle['angleNan'] = finalAngle.apply(lambda x: backbone_angle_nan(x), axis = 1)

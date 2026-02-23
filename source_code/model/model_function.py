@@ -66,7 +66,8 @@ Activation: LeakyReLU
                         logging.use_base_model,
                         normalizer,
                         logging.use_deep_shallow,
-                        logging.shallow_layer)
+                        logging.shallow_layer,
+                        logging.output_activation)
     elif logging.model_name == 'GNNResNet':
         logging.model_architecture = '''
 Operators: Cheb - (Block) x num_layers - (out layer)
@@ -96,7 +97,8 @@ Activation: LeakyReLU
                         logging.gat_concat,
                         normalizer,
                         logging.use_deep_shallow,
-                        logging.shallow_layer)
+                        logging.shallow_layer,
+                        logging.output_activation)
     
     else:
         raise TypeError(f'Model {logging.model_name} is not defined.')

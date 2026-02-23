@@ -19,26 +19,48 @@ def record_test(trueY, predY, softY=None, cips_evaluate = False):
     if cips_evaluate:
         true_interface = np.where(true_interface == 1, True, False)
         pred_interface = np.where(pred_interface == 1, True, False)
-        roc_auc_score = sk_metrics.roc_auc_score(true_interface,pred_interface)
-        average_precision_score = sk_metrics.average_precision_score(true_interface,pred_interface)
+        # Handle single-class case (all True or all False in ground truth)
+        n_unique_true = len(np.unique(true_interface))
+        if n_unique_true < 2:
+            # ROC AUC undefined for single class - use placeholder
+            roc_auc_score = 0.5  # Random baseline
+            average_precision_score = np.mean(true_interface) if np.any(true_interface) else 0.0
+        else:
+            roc_auc_score = sk_metrics.roc_auc_score(true_interface,pred_interface)
+            average_precision_score = sk_metrics.average_precision_score(true_interface,pred_interface)
         recall_score = sk_metrics.recall_score(true_interface,pred_interface, zero_division=0, average='binary')
         precision_score = sk_metrics.precision_score(true_interface,pred_interface, zero_division=0, average='binary')
         f1_score = sk_metrics.f1_score(true_interface,pred_interface, zero_division=0, average='binary')
         accuracy_score = sk_metrics.accuracy_score(true_interface,pred_interface)
     else:
-        if len(np.unique(true_interface)) == 2:
-            true_interface = true_interface != 0
-            pred_interface = pred_interface != 0
-            roc_auc_score = sk_metrics.roc_auc_score(true_interface,pred_interface)
-            average_precision_score = sk_metrics.average_precision_score(true_interface,pred_interface)
+        n_classes = len(np.unique(true_interface))
+        if n_classes <= 2:
+            # Binary classification: convert to boolean (epitope vs non-epitope)
+            true_binary = true_interface != 0
+            pred_binary = pred_interface != 0
+            if n_classes == 1:
+                # All same class - metrics undefined, use placeholders
+                roc_auc_score = 0.5  # Random baseline
+                average_precision_score = np.mean(true_binary) if np.mean(true_binary) > 0 else 0.0
+            else:
+                roc_auc_score = sk_metrics.roc_auc_score(true_binary, pred_binary)
+                average_precision_score = sk_metrics.average_precision_score(true_binary, pred_binary)
         else:
+            # Multi-class (3 classes: 0, 1, 2)
             if softY is not None:
                 soft_pred_interface = softY.detach().cpu().numpy()
-                roc_auc_score = sk_metrics.roc_auc_score(true_interface,soft_pred_interface, average='macro', multi_class='ovo')
-                average_precision_score = sk_metrics.average_precision_score(true_interface,soft_pred_interface, average='micro')
+                # Ensure classes in y_true match columns in y_score
+                present_classes = np.unique(true_interface)
+                if len(present_classes) < soft_pred_interface.shape[1]:
+                    # Filter to only classes present in true labels
+                    roc_auc_score = sk_metrics.roc_auc_score(true_interface, soft_pred_interface[:, present_classes], 
+                                                             average='macro', multi_class='ovo', labels=present_classes)
+                else:
+                    roc_auc_score = sk_metrics.roc_auc_score(true_interface, soft_pred_interface, average='macro', multi_class='ovo')
+                average_precision_score = sk_metrics.average_precision_score(true_interface, soft_pred_interface, average='micro')
             else:
-                roc_auc_score = sk_metrics.roc_auc_score(true_interface,pred_interface, average='macro', multi_class='ovo')
-                average_precision_score = sk_metrics.average_precision_score(true_interface,pred_interface, average='micro')
+                roc_auc_score = sk_metrics.roc_auc_score(true_interface, pred_interface, average='macro', multi_class='ovo')
+                average_precision_score = sk_metrics.average_precision_score(true_interface, pred_interface, average='micro')
             '''
             For example recall scrore
                 Micro: Sum of absolute tp and fn/fp of each classes.
@@ -76,6 +98,18 @@ def record_res_id(predY, softY, resID, resShort, pdb, fold_folder, trueY=None):
                             'score':score[np.arange(len(score)),predY]})
     final_df.to_csv(os.path.join(fold_folder, f'{pdb}_final_result.txt'), sep='\t', index=False)  # Save as txt file
 
+def record_res_id_regression(resID, resShort, pred_score, pdb, fold_folder, trueY=None, output_activation='identity'):
+    final_df = pd.DataFrame({
+        'res_id': resID,
+        'res_name': resShort,
+        'pred_score': pred_score
+    })
+    if output_activation == 'sigmoid':
+        final_df['pred_prob'] = pred_score
+    if trueY is not None:
+        final_df['true_score'] = trueY
+    final_df.to_csv(os.path.join(fold_folder, f'{pdb}_final_result.txt'), sep='\t', index=False)
+
 def record_test_pdb(data, predY, softY, res_short, pdb, fold_folder, plot_network_check, networkx_seed):
     if data.y is not None:
         true_y = data.y.detach().cpu().numpy()
@@ -87,6 +121,14 @@ def record_test_pdb(data, predY, softY, res_short, pdb, fold_folder, plot_networ
     record_res_id(pred_y, soft_y, res_id, res_short, pdb, fold_folder, true_y)
     if plot_network_check:
         plot_network(res_id, pred_y, true_y, data.edge_index, data.edge_attr, pdb, fold_folder, networkx_seed)
+
+def record_test_pdb_regression(data, pred_score, res_short, pdb, fold_folder, output_activation='identity'):
+    if data.y is not None:
+        true_y = data.y.detach().cpu().numpy()
+    else:
+        true_y = None
+    res_id = data.res_id.detach().cpu().numpy()
+    record_res_id_regression(res_id, res_short, pred_score, pdb, fold_folder, true_y, output_activation=output_activation)
 
 @torch.no_grad()
 def test_model(modelBuild, testData, testList, logging, testType:str='train', foldInd=None):
@@ -132,14 +174,16 @@ def test_model(modelBuild, testData, testList, logging, testType:str='train', fo
     elif logging.loss_function == 'mse':
         for pdb, data in tqdm_enum:
             result = prediction_test(data, modelBuild, logging.device)
-            true_y = data.y == 0
-            pred_y = result.reshape(-1) <= logging.mse_threshold
+            pred_score = result.reshape(-1)
+            true_y = data.y.reshape(-1).float()
             assert not data.y.isnan().any(), f'There is NaN value of pdb "{pdb}" in true Y {data.y}'
-            assert not pred_y.isnan().any(), f'There is NaN value of pdb "{pdb}" in pred Y {pred_y}'
-            record_list = record_test(true_y, pred_y)
-            record_list = [pdb] + info_list + record_list + [testType]
+            assert not pred_score.isnan().any(), f'There is NaN value of pdb "{pdb}" in pred Y {pred_score}'
+            mse_value = torch.mean((pred_score - true_y) ** 2).item()
+            record_list = [mse_value]
+            record_list = [pdb] + info_list + record_list + [testType] + ['all']
             record_data.append(record_list)
             if testType == 'test':
-                record_test_pdb(data, pred_y, pdb, fold_folder, logging)
-                
+                output_activation = getattr(logging, 'output_activation', 'identity')
+                record_test_pdb_regression(data, pred_score.detach().cpu().numpy(), data.res_short, pdb, fold_folder, output_activation=output_activation)
+                 
     return record_data

@@ -31,16 +31,23 @@ def extract_cdr_sequence(pdb_series, output_folder):
 
 def extract_sequence(pdb_df, logging):
     for pdb_id in tqdm(pdb_df.pdbID, desc = 'Extract sequence', unit='pdb'):
-        # Antigen
-        data_path = os.path.join(logging.directory_data, pdb_id)
-        ag_profile_file = pd.read_parquet(os.path.join(data_path,'pdb_profile.parquet'))
+        try:
+            # Antigen
+            data_path = os.path.join(logging.directory_data, pdb_id)
+            ag_profile_file = pd.read_parquet(os.path.join(data_path, 'pdb_profile.parquet'))
 
-        ag_profile = ag_profile_file[ag_profile_file.chainType == 'antigen']
-        
-        output_folder = os.path.join(data_path, 'sequence')
-        if not os.path.exists(output_folder):
-            os.mkdir(output_folder)
-        _ = extract_chain_sequence(ag_profile, output_folder, 'antigen')
-        # Antibody
-        filtered_df = pdb_df[pdb_df.pdbID == pdb_id]
-        extract_cdr_sequence(filtered_df, output_folder)
+            ag_profile = ag_profile_file[ag_profile_file.chainType == 'antigen']
+
+            output_folder = os.path.join(data_path, 'sequence')
+            if not os.path.exists(output_folder):
+                os.mkdir(output_folder)
+            _ = extract_chain_sequence(ag_profile, output_folder, 'antigen')
+
+            # Antibody
+            filtered_df = pdb_df[pdb_df.pdbID == pdb_id]
+            extract_cdr_sequence(filtered_df, output_folder)
+        except Exception as e:
+            if hasattr(logging, 'error_extract_sequence'):
+                logging.error_extract_sequence.append(pdb_id)
+            if hasattr(logging, 'log_step_error'):
+                logging.log_step_error(pdb_id, 'extract_sequence', e)

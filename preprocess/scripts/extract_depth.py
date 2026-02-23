@@ -24,19 +24,27 @@ def get_depth_df(rd, pdb_id, chain_id):
 def extract_depth(pdb_df, logging):
     parser = PDBParser(QUIET=True)
     for pdb_id in tqdm(pdb_df.pdbID, desc='Extract depth', unit='pdb'):  
-        pdb_id_path = os.path.join(logging.directory_data, pdb_id)
-        output_path = os.path.join(pdb_id_path, 'depth')
-        lig_file_path = os.path.join(pdb_id_path, 'lig.pdb')
-        structure = parser.get_structure(pdb_id, lig_file_path)
-        for chain in structure[0]:
-            rd = ResidueDepth(chain)
-            lig_df = get_depth_df(rd, pdb_id, chain.id)
+        try:
+            pdb_id_path = os.path.join(logging.directory_data, pdb_id)
+            output_path = os.path.join(pdb_id_path, 'depth')
+            lig_file_path = os.path.join(pdb_id_path, 'lig.pdb')
+            structure = parser.get_structure(pdb_id, lig_file_path)
 
-        if not os.path.exists(output_path):
-            os.mkdir(output_path)
-        lig_df.to_parquet(os.path.join(output_path,'depth_result.parquet'))
-        # except:
-        #     logging.error_depth.append(pdb_id)
+            lig_df = None
+            for chain in structure[0]:
+                rd = ResidueDepth(chain)
+                lig_df = get_depth_df(rd, pdb_id, chain.id)
+
+            if lig_df is None:
+                raise RuntimeError('No chains found in lig.pdb')
+
+            if not os.path.exists(output_path):
+                os.mkdir(output_path)
+            lig_df.to_parquet(os.path.join(output_path, 'depth_result.parquet'))
+        except Exception as e:
+            logging.error_depth.append(pdb_id)
+            if hasattr(logging, 'log_step_error'):
+                logging.log_step_error(pdb_id, 'extract_depth', e)
     if not logging.error_depth:
         logging.message += '''
 All pdb depth have been extracted successfully.'''

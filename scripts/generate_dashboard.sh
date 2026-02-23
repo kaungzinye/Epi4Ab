@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-PROJ_DIR="/leonardo_work/AIFAC_F01_302/Epi4Ab"
+PROJ_DIR="/leonardo_work/EUHPC_D29_035/Epi4Ab"
 cd "$PROJ_DIR"
 
 # Check arguments

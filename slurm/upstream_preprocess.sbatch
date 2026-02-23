@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=epi4ab-upstream-preprocess
-#SBATCH --account=AIFAC_F01_302
+#SBATCH --account=EUHPC_D29_035
 #SBATCH --partition=boost_usr_prod
 #SBATCH --qos=normal
 #SBATCH --time=04:00:00
@@ -8,15 +8,15 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --output=/leonardo_work/AIFAC_F01_302/Epi4Ab/logs/%x-%j.out
-#SBATCH --error=/leonardo_work/AIFAC_F01_302/Epi4Ab/logs/%x-%j.err
+#SBATCH --output=/leonardo_work/EUHPC_D29_035/Epi4Ab/logs/%x-%j.out
+#SBATCH --error=/leonardo_work/EUHPC_D29_035/Epi4Ab/logs/%x-%j.err
 
 set -euo pipefail
 
 module purge
 module load python/3.11.7
 
-PROJ=/leonardo_work/AIFAC_F01_302/Epi4Ab
+PROJ=/leonardo_work/EUHPC_D29_035/Epi4Ab
 cd "$PROJ"
 
 # Use the upstream virtualenv for dependencies

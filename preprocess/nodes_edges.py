@@ -37,14 +37,16 @@ pymol = args.pymol_path
 def prepare_nodeEdge(args):
     meta_df = pd.read_csv(metadata_file)
     
-    ferr = open('errors.txt','a')
+    ferr_path = os.path.join(cwd, f'errors_nodes_edges_{args.Catom}.txt')
+    ferr = open(ferr_path, 'a', encoding='utf-8')
     cnt = 0
+    orig_cwd = os.getcwd()
 
     print(f'using {metadata_file} \n--total pdbs: {len(meta_df.pdbID.values)}')
     for pdbId in tqdm(meta_df.pdbID.values, desc=f'Prepare nodes edges for {args.Catom}'):
-        df_RESprofile = pd.read_parquet(os.path.join(profile_path, pdbId, 'pdb_profile.parquet'))
         # pdbId = f'{pdbId}_re'  # for re extra pdbs
         try:
+            df_RESprofile = pd.read_parquet(os.path.join(profile_path, pdbId, 'pdb_profile.parquet'))
             edge_attFile = os.path.join(cwd,pdbId,f'edge_attribute_dist_{args.Catom}.txt')
             if os.path.exists(edge_attFile) and os.path.getsize(edge_attFile) > 5: 
                 pass
@@ -56,10 +58,13 @@ def prepare_nodeEdge(args):
                 # print(f'NOT running properly: {pdbId}')
                 cnt += 1
             # print(f'{pdbId} -- {cnt}')
-        except:
-            ferr.write(f'{datetime.now()} -{pdbId}\n')
-            #raise
-            pass
+        except Exception as e:
+            ferr.write(f'{datetime.now()} - {pdbId} - {type(e).__name__}: {e}\n')
+        finally:
+            try:
+                os.chdir(orig_cwd)
+            except Exception:
+                pass
     ferr.close()
 
 def tensor_format(pdbId, df_RESprofile):
@@ -145,5 +150,4 @@ def tensor_format(pdbId, df_RESprofile):
     # '''
 # ===================
 prepare_nodeEdge(args)
-
 
