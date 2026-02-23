@@ -1,6 +1,5 @@
-# Pipeline Quickstart (Teammate Handoff)
+# Pipeline Quickstart
 
-Send this file to a teammate. It is the step-by-step “run it on Leonardo” guide.
 
 Goal:
 1) Preprocess structures into graphs (with gating/quarantine)
