@@ -179,11 +179,11 @@ From the trained model configuration (`final_trained_Epi4Ab/log.json`):
 
 ```mermaid
 graph TB
-    subgraph INPUTS["Weighted Input Features<br/>(After Feature Weighting)"]
+    subgraph INPUTS["Input Features<br/>(After Feature Weighting Where Applicable)"]
         W_STRUCT["Weighted x_struct<br/>(N, struct_dim)<br/>× weight_dict['struct']"]
         W_SEQ["Weighted x_seq<br/>(N, seq_dim)<br/>× weight_dict['pre-trained']"]
         W_TOKEN["Weighted token<br/>(N, token_dim)<br/>× weight_dict['token']"]
-        W_AB["Weighted x_antiberty<br/>(N, ab_dim)<br/>× weight_dict['antiberty']"]
+        W_AB["x_antiberty (raw)<br/>(M_ab, antiberty_ff_in)<br/>⚠️ Not weighted in MHA modes"]
     end
 
     subgraph MHA_BLOCK["Multi-Head Attention Block<br/>(use_mha_on setting)"]
@@ -195,9 +195,9 @@ graph TB
             MHA1 --> OUT1
         end
         
-        subgraph MODE2["Mode 2: 'seq'<br/>(use_mha_on='seq')<br/>✅ CURRENTLY ACTIVE"]
-            MHA2["MHA Layers (mha_num_layers)<br/>Query: x_seq only<br/>Key/Value: x_ab (antibody)<br/>⚠️ Sequence-antibody attention"]
-            FF2["FFN<br/>(Optional)<br/>On MHA output"]
+        subgraph MODE2["Mode 2: 'seq'<br/>(use_mha_on='seq')"]
+            MHA2["MHA Layers (mha_num_layers)<br/>Query: x_seq only<br/>Key/Value: x_ab (antibody)<br/>Direction: antigen attends to antibody"]
+            FF2["Seq FFN (Optional)<br/>(use_seq_ff) after MHA"]
             CONCAT2["Concatenate<br/>x = [struct, seq_enhanced, token]"]
             OUT2["Output<br/>(N, in_feature)"]
             MHA2 --> FF2
@@ -206,8 +206,11 @@ graph TB
         end
         
         subgraph MODE3["Mode 3: 'no'<br/>(use_mha_on='no')"]
-            CONCAT3["Direct Concatenate<br/>x = [struct, seq, ab, token]"]
-            OUT3["Output<br/>(N, in_feature)<br/>⚠️ NO MHA"]
+            AB3["AntiBERTy FFN + flatten<br/>→ per-complex vector"]
+            EXP3["Expand antibody vector to N residues"]
+            CONCAT3["Concatenate<br/>x = [struct, seq, ab_expanded, token]"]
+            OUT3["Output<br/>(N, in_feature)"]
+            AB3 --> EXP3 --> CONCAT3
             CONCAT3 --> OUT3
         end
     end
@@ -224,7 +227,7 @@ graph TB
 
     W_STRUCT --> CONCAT3
     W_SEQ --> CONCAT3
-    W_AB --> CONCAT3
+    W_AB --> AB3
     W_TOKEN --> CONCAT3
 
     style INPUTS fill:#2c5aa0,color:#fff
@@ -246,18 +249,18 @@ graph TB
 3. MHA: Query = `x` (all antigen features), Key/Value = `x_antiberty` (antibody)
 4. Output: Antigen features enriched with antibody context
 
-**⚠️ Note on Permutation Invariance**: You're right that MHA is permutation invariant. In Mode 1, concatenating structural features (which have spatial meaning) with sequence features before MHA may not fully respect spatial structure. This is why Mode 2 (current) applies MHA only to sequence features, then combines with structure afterward.
+**⚠️ Note on Permutation Invariance**: MHA here uses no explicit positional encoding, so it is permutation-equivariant with respect to input ordering. In Mode 1, concatenating structural features (which have spatial meaning) with sequence features before MHA may not fully respect spatial structure. This is why some configurations apply MHA only to sequence features, then combine with structure afterward.
 
 **When to Use**: When you want all antigen information (structure + sequence + tokens) to interact with antibody simultaneously
 
-#### Mode 2: MHA on Sequence Only (`use_mha_on='seq'`) ← **CURRENT**
+#### Mode 2: MHA on Sequence Only (`use_mha_on='seq'`)
 
 **Intuition**: Let sequence-antibody interaction happen first, then add structural context
 
 **Flow**:
 1. Weight all features
 2. MHA: Query = `x_seq` (sequence only), Key/Value = `x_antiberty` (antibody)
-3. Optional FFN on MHA output
+3. Optional sequence FFN (`use_seq_ff`) is applied **after** MHA in this mode
 4. Concatenate: `x = [x_struct, seq_enhanced, token]` → combine with structure
 
 **Why This Design?**:
@@ -268,7 +271,11 @@ graph TB
 
 **Token Role**: Token features are **separate** - they balance VH/VL family importance. They don't go through MHA in this mode, they're added after to provide family context.
 
-**When to Use**: When sequence patterns are more important than structural features for antibody binding (current model uses this)
+**Important implementation detail** (matches `source_code/model/model_class/initial_process.py`):
+- `x_antiberty` is passed into MHA as raw AntiBERTy embeddings (dimension `antiberty_ff_in`, typically 512).
+- The AntiBERTy FFN (`antiberty_ff_out`) and antiberty feature weighting are applied only in `use_mha_on='no'` mode.
+
+**When to Use**: When sequence patterns are more important than structural features for antibody binding
 
 #### Mode 3: No MHA (`use_mha_on='no'`)
 
@@ -399,11 +406,11 @@ graph TB
 
 ```mermaid
 graph TB
-    subgraph INPUTS["Weighted Input Features"]
+    subgraph INPUTS["Input Features\n(After Feature Weighting Where Applicable)"]
         W_STRUCT["Weighted x_struct<br/>(N, struct_dim)<br/>× weight_dict['struct']"]
         W_SEQ["Weighted x_seq<br/>(N, seq_dim)<br/>× weight_dict['pre-trained']"]
         W_TOKEN["Weighted token<br/>(N, token_dim)<br/>× weight_dict['token']"]
-        W_AB["Weighted x_antiberty<br/>(N, ab_dim)<br/>× weight_dict['antiberty']"]
+        W_AB["x_antiberty (raw)<br/>(M_ab, antiberty_ff_in)<br/>⚠️ Not weighted in MHA modes"]
     end
 
     subgraph MHA_BLOCK["Multi-Head Attention Block<br/>(use_mha_on setting)"]
@@ -416,8 +423,8 @@ graph TB
         end
         
         subgraph MODE2["Mode 2: 'seq'<br/>(use_mha_on='seq')"]
-            MHA2["MHA<br/>Query: x_seq only<br/>Key/Value: x_ab (antibody)"]
-            FF2["FFN<br/>(Optional)"]
+            MHA2["MHA<br/>Query: x_seq only<br/>Key/Value: x_ab (antibody)\nDirection: antigen attends to antibody"]
+            FF2["Seq FFN (Optional)\n(use_seq_ff) after MHA"]
             CONCAT2["Concatenate<br/>x = [struct, seq_enhanced, token]"]
             OUT2["Output<br/>(N, in_feature)"]
             MHA2 --> FF2
@@ -426,8 +433,11 @@ graph TB
         end
         
         subgraph MODE3["Mode 3: 'no'<br/>(use_mha_on='no')"]
-            CONCAT3["Direct Concatenate<br/>x = [struct, seq, ab, token]"]
+            AB3["AntiBERTy FFN + flatten\n→ per-complex vector"]
+            EXP3["Expand antibody vector to N residues"]
+            CONCAT3["Concatenate\nx = [struct, seq, ab_expanded, token]"]
             OUT3["Output<br/>(N, in_feature)"]
+            AB3 --> EXP3 --> CONCAT3
             CONCAT3 --> OUT3
         end
     end
@@ -444,7 +454,7 @@ graph TB
 
     W_STRUCT --> CONCAT3
     W_SEQ --> CONCAT3
-    W_AB --> CONCAT3
+    W_AB --> AB3
     W_TOKEN --> CONCAT3
 
     style INPUTS fill:#2c5aa0,color:#fff
