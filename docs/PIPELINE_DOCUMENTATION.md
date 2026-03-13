@@ -2,6 +2,11 @@
 
 Complete documentation of the Epi4Ab preprocessing and inference pipeline, including workflows for both the test3A dataset (20 PDBs) and the EpiScan dataset.
 
+Note (2026-02): this document mostly describes the legacy classification pipeline (`node_label_pi.parquet` / `isInterface`).
+For the current Seqitope work (pure regression, Phase 1 ProteinMPNN NLL -> Phase 2 Seqitope), use:
+- `docs/PIPELINE_QUICKSTART.md`
+- `docs/PHASE1_REGRESSION_PIPELINE.md`
+
 ## Table of Contents
 
 1. [Overview](#overview)
@@ -24,6 +29,8 @@ The Epi4Ab pipeline processes antibody-antigen complex structures to predict epi
 5. **Visualization**: Generate interactive dashboards
 
 Each stage includes validation checkpoints to ensure data integrity and alignment.
+
+For regression outputs, `scripts/visualize_results.py` generates regression plots (not confusion matrices).
 
 ## Test3A Dataset Pipeline (20 PDBs)
 
@@ -529,3 +536,13 @@ python scripts/prepare_proteinmpnn_scores.py \
 - Review log files in `logs/` directory
 - Verify file formats match expected structure
 - Ensure all dependencies are installed
+
+### Seqitope Label File Schema (Phase 2)
+- File: `nodes_edges/<pdb_id>/node_label_seqitope.parquet`
+- Columns: `resId:int`, `score:float` in `[0,1]`
+- Alignment: `resId` must match `node_feature.parquet:resId` 1:1 and order-preserving.
+
+Validation command:
+```bash
+python scripts/validate_pipeline.py   --pdb_id <pdb_id>   --nodes_edges_dir <OUT_BASE>/nodes_edges   --step labels   --target_type seqitope   --target_file node_label_seqitope.parquet   --target_column score
+```

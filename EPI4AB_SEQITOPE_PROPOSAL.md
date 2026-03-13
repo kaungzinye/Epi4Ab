@@ -6,6 +6,12 @@ If you only need run commands, see `docs/PIPELINE_QUICKSTART.md`.
 
 ## Executive Summary
 
+> Source of Truth — Phase 1 vs Phase 2
+> - Phase 1: ProteinMPNN NLL regression (output_activation=identity). De-risk only. No joint loss.
+> - Phase 2: Seqitope-only regression (output_activation=sigmoid). Optional warm-start from Phase 1.
+> - Same 1D regression head in both phases; targets/activation differ only.
+
+
 - **Phase 1 (implemented):** train a regression model to predict **ProteinMPNN per-residue NLL** (synthetic calibration target). This is *not* epitope learning.
 - **Phase 2 (next):** fine-tune the same regression model to predict **Seqitope per-residue score** in `[0,1]` (the real epitope signal).
 

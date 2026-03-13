@@ -3,8 +3,8 @@
 
 Goal:
 1) Preprocess structures into graphs (with gating/quarantine)
-2) Generate ProteinMPNN per-residue regression targets
-3) Train Phase 1 regression model
+2) Phase 1: train a regression model on ProteinMPNN per-residue NLL (synthetic calibration)
+3) Phase 2: fine-tune on Seqitope per-residue scores (the real target)
 
 ## Step 0: One-time setup
 
@@ -73,7 +73,7 @@ The gates write filtered metadata:
 - `OUT_BASE/gates/nodes_edges/metadata.ok.nodes_edges.csv`
 - `OUT_BASE/gates/fill_edge/metadata.ok.fill_edge.csv`
 
-## Step 2: Generate Phase 1 targets (ProteinMPNN scores)
+## Step 2: Generate Phase 1 targets (ProteinMPNN NLL)
 
 This writes `proteinmpnn_scores.parquet` into each `nodes_edges/<pdb_id>/` and validates them.
 
@@ -91,17 +91,64 @@ OUT_BASE=<same OUT_BASE>
 sbatch slurm/train_phase1_proteinmpnn_regression.sbatch
 ```
 
+By default this script does a deterministic PDB-level train/test split (to avoid evaluating on the training set). You can override:
+
+```bash
+OUT_BASE=<same OUT_BASE> \
+SPLIT_SEED=42 \
+TEST_FRACTION=0.2 \
+sbatch slurm/train_phase1_proteinmpnn_regression.sbatch
+```
+
 Training parameters:
 - `parameters_phase1_proteinmpnn_regression.txt`
 
-## Step 4: Phase 2 placeholder (Seqitope fine-tune)
+What Phase 1 proves:
+- The regression head + MSE plumbing works end-to-end on your graph inputs.
+- The pipeline can produce per-residue continuous outputs aligned with `resId`.
 
-Phase 2 will switch to real labels per PDB:
-- `nodes_edges/<pdb_id>/node_label_seqitope.parquet` with `resId, score`
+What Phase 1 does NOT prove:
+- It does not prove epitope accuracy (ProteinMPNN NLL is not an epitope label).
 
-Training should switch to:
-- `target_type=seqitope`
-- `target_file=node_label_seqitope.parquet`
+Note: Phase 1 trains on raw ProteinMPNN NLL targets, so `output_activation=identity` is used (raw regression output, not a probability).
+
+## Optional: Visualize Phase 1 regression outputs
+
+Phase 1 training does not automatically emit per-PDB `*_final_result.txt` files.
+To visualize, run regression inference using the trained `model.pt`, then build a dashboard.
+
+1) Run inference (produces `test_record/*_final_result.txt` with `pred_score` and `true_score`):
+
+```bash
+OUT_BASE=<same OUT_BASE>
+MODEL_DIR=/leonardo_scratch/fast/EUHPC_D29_035/epi4ab/training_phase1/<RUN_TAG>/<DATE>_GNNResNet_1
+sbatch slurm/inference_phase1_proteinmpnn_regression.sbatch
+```
+
+2) Create an interactive dashboard:
+
+```bash
+python scripts/visualize_results.py \
+  --test_record_dir <INFERENCE_OUT_DIR>/<DATE>_<MODEL>/test_record
+```
+
+## Step 4: Phase 2 (next): Seqitope fine-tune
+
+Phase 2 switches to real labels per PDB:
+- `nodes_edges/<pdb_id>/node_label_seqitope.parquet` with columns `resId, score` where `score` is in `[0,1]`.
+
+Recommended Phase 2 approach:
+1) Build/convert Seqitope labels into the per-PDB parquet format above.
+2) Validate labels alignment:
+   - `python scripts/validate_pipeline.py --metadata <csv> --nodes_edges_dir <...> --step labels --target_type seqitope --target_file node_label_seqitope.parquet --target_column score`
+3) Train with:
+   - `target_type=seqitope`
+   - `target_file=node_label_seqitope.parquet`
+   - `target_column=score`
+   - `output_activation=sigmoid`
+
+When you have Seqitope labels, do a quick ablation:
+- train from scratch vs initialize from the Phase 1 checkpoint
 
 ## Notes: pretrained vs non-pretrained
 
@@ -110,3 +157,14 @@ Training should switch to:
 
 For the detailed explanation (including freeze vs fine-tune / backprop into ESM2), see:
 - `docs/PHASE1_REGRESSION_PIPELINE.md`
+
+## Start Phase 2 (Seqitope)
+
+Use the Phase 2 parameters and SLURM wrappers. Same regression head as Phase 1; only labels/activation differ.
+
+```bash
+PARAMETERS_FILE=parameters_phase2_seqitope_regression.txt OUT_BASE=<.../upstream_preprocess_autodetect/<RUN_TAG>> METADATA_OK=<your seqitope metadata csv> sbatch slurm/validate_seqitope.sbatch
+
+# Training (after labels available)
+sbatch slurm/train_phase1_proteinmpnn_regression.sbatch   # reuse epi_graph with Phase 2 params (mse + sigmoid + target_type=seqitope)
+```
