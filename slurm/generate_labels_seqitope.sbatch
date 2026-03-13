@@ -1,4 +1,6 @@
 #!/bin/bash
+# Phase 2 only; expects node_label_seqitope.parquet under nodes_edges/<pdb_id>.
+# Offline safety: export TRANSFORMERS_OFFLINE=1 and HF_HUB_OFFLINE=1 (optional HF_HOME).
 #SBATCH --job-name=seqitope-gen-labels
 #SBATCH --account=EUHPC_D29_035
 #SBATCH --partition=boost_usr_prod
