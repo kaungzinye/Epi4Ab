@@ -40,16 +40,26 @@ NODES_EDGES_DIR="$OUT_BASE/nodes_edges"
 PROCESSED_DIR="$OUT_BASE/processed_data"
 METADATA_OK="${METADATA_OK:-$OUT_BASE/gates/fill_edge/metadata.ok.fill_edge.csv}"
 
+# Train/test split: SPLIT_MODE=antigen_group keeps all complexes per metadata pdb code together.
+SPLIT_SEED="${SPLIT_SEED:-42}"
+TEST_FRACTION="${TEST_FRACTION:-0.2}"
+SPLIT_MODE="${SPLIT_MODE:-antigen_group}"
+
 RUN_TAG="${RUN_TAG:-$(date +%Y%m%d_%H%M%S)}"
 OUT_DIR="${OUT_DIR:-/leonardo_scratch/fast/EUHPC_D29_035/epi4ab/training_phase1/${RUN_TAG}}"
 
 PARAMETERS_FILE="${PARAMETERS_FILE:-$PROJ/parameters_phase1_proteinmpnn_regression.txt}"
 
-PDB_LIST="$OUT_DIR/pdb_list.csv"
+TRAIN_PDB_LIST="$OUT_DIR/pdb_list_train.csv"
+TEST_PDB_LIST="$OUT_DIR/pdb_list_test.csv"
 
 # Export for embedded Python snippets
 export METADATA_OK
-export PDB_LIST
+export TRAIN_PDB_LIST
+export TEST_PDB_LIST
+export SPLIT_SEED
+export TEST_FRACTION
+export SPLIT_MODE
 
 echo "=========================================="
 echo "Epi4Ab Phase 1 Training (ProteinMPNN regression)"
@@ -65,27 +75,16 @@ echo "=========================================="
 
 mkdir -p "$OUT_DIR"
 
-echo "Generating training pdb list..."
-python - <<'PY'
-import os
-import pandas as pd
-
-meta = os.environ['METADATA_OK']
-out = os.environ['PDB_LIST']
-
-df = pd.read_csv(meta)
-col = None
-for c in ('pdbID', 'pdbId', 'pdb_id'):
-    if c in df.columns:
-        col = c
-        break
-if col is None:
-    col = df.columns[0]
-
-out_df = pd.DataFrame({'pdbID': df[col].astype(str).tolist()})
-out_df.to_csv(out, index=False)
-print(f"Wrote {out} with {len(out_df)} PDBs")
-PY
+echo "Generating train/test pdb lists (SPLIT_MODE=${SPLIT_MODE})..."
+SPLIT_REPORT="$OUT_DIR/split_report_seed${SPLIT_SEED}.csv"
+python "$PROJ/scripts/make_train_test_split.py" \
+  --metadata "$METADATA_OK" \
+  --out_train "$TRAIN_PDB_LIST" \
+  --out_test "$TEST_PDB_LIST" \
+  --split_mode "$SPLIT_MODE" \
+  --seed "$SPLIT_SEED" \
+  --test_fraction "$TEST_FRACTION" \
+  --report "$SPLIT_REPORT"
 
 echo "Building CLI args from $PARAMETERS_FILE"
 PARAMS=""
@@ -102,14 +101,23 @@ python epi_graph.py \
   "$SAVED_PARAMS" \
   "$NODES_EDGES_DIR" \
   "$PROCESSED_DIR" \
-  "$PDB_LIST" \
-  "$PDB_LIST" \
-  "$PDB_LIST" \
-  "$PDB_LIST" \
+  "$TRAIN_PDB_LIST" \
+  "$TEST_PDB_LIST" \
+  "$TRAIN_PDB_LIST" \
+  "$TEST_PDB_LIST" \
   "$OUT_DIR" \
   $PARAMS
 
 echo "DONE"
+
+# Optional: register run in plots hub when RUN_ID is set
+if [[ -n "${RUN_ID:-}" ]]; then
+  python "$PROJ/scripts/register_training_run.py" \
+    --run_id "$RUN_ID" \
+    --out_dir "$OUT_DIR" \
+    --backend "${ASA_BACKEND:-}" \
+    --split_seed "${SPLIT_SEED:-}" || true
+fi
 
 if command -v deactivate >/dev/null 2>&1; then
   deactivate

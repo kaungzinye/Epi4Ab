@@ -1,8 +1,21 @@
 **Epi4Ab: Prediction of conformational epitopes for specific antibody VH/VL families and CDRs sequences**
-==============
-Last updating: `2025-11-26`
 
-# USAGE
+Last updated: 2026-06
+
+## Start here (current regression / DASA workflow)
+
+1. [docs/PIPELINE_QUICKSTART.md](docs/PIPELINE_QUICKSTART.md) — preprocess → Phase 1 → optional DASA
+2. [docs/ARTIFACT_LAYOUT.md](docs/ARTIFACT_LAYOUT.md) — plots hub on scratch (`epi4ab/plots/index.html`)
+3. [docs/STORAGE_AND_DRIVES.md](docs/STORAGE_AND_DRIVES.md) — Leonardo work vs scratch vs archive
+4. [docs/DASA_EVAL_AND_VIZ.md](docs/DASA_EVAL_AND_VIZ.md) — which visualization script to run
+
+**Legacy classification pipeline** (`node_label_pi.parquet`, `isInterface` 0/1/2): see [docs/LEGACY_CLASSIFICATION_PIPELINE.md](docs/LEGACY_CLASSIFICATION_PIPELINE.md).
+
+Copy environment template: `.env.example` → `.env` (gitignored). Use `requirements.lock.txt` for pinned deps.
+
+---
+
+# USAGE (original paper / classification workflow)
 
 ## Set up
 

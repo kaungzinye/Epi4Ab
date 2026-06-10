@@ -11,8 +11,10 @@ cd "$PROJ_DIR"
 if [ $# -lt 1 ]; then
     echo "Usage: $0 <test_record_dir> [pdb_id]"
     echo ""
+    echo "Set RUN_ID to write dashboard under epi4ab/plots/runs/<RUN_ID>/html/"
+    echo ""
     echo "Examples:"
-    echo "  $0 output_inference/2025-12-12_GNNResNet_7/test_record"
+    echo "  RUN_ID=v103_biopy_s42 $0 /path/to/test_record"
     echo "  $0 output_inference/2025-12-12_GNNResNet_7/test_record 1n8z_BAC"
     echo ""
     exit 1
@@ -20,6 +22,8 @@ fi
 
 TEST_RECORD_DIR="$1"
 PDB_ID="${2:-}"
+RUN_ID="${RUN_ID:-}"
+PLOTS_ROOT="${EPI4AB_PLOTS_ROOT:-/leonardo_scratch/fast/EUHPC_D29_035/epi4ab/plots}"
 
 # Verify test_record directory exists
 if [ ! -d "$TEST_RECORD_DIR" ]; then
@@ -44,22 +48,32 @@ if [ -n "$PDB_ID" ]; then
 else
     echo "Generating dashboard for all PDBs"
 fi
+if [ -n "$RUN_ID" ]; then
+    echo "RUN_ID: $RUN_ID"
+fi
 echo "Started: $(date)"
 echo "=================================================="
 echo ""
 
-# Run visualization script
+VIZ_ARGS=(--test_record_dir "$TEST_RECORD_DIR" --build-index)
+if [ -n "$RUN_ID" ]; then
+    VIZ_ARGS+=(--run_id "$RUN_ID")
+fi
 if [ -n "$PDB_ID" ]; then
-    ./venv/bin/python scripts/visualize_results.py \
-        --test_record_dir "$TEST_RECORD_DIR" \
-        --pdb_id "$PDB_ID"
-else
-    ./venv/bin/python scripts/visualize_results.py \
-        --test_record_dir "$TEST_RECORD_DIR"
+    VIZ_ARGS+=(--pdb_id "$PDB_ID")
 fi
 
-# Find the dashboard file
-DASHBOARD_FILE="$(dirname "$TEST_RECORD_DIR")/dashboard.html"
+if [ -x "./venv/bin/python" ]; then
+    ./venv/bin/python scripts/visualize_results.py "${VIZ_ARGS[@]}"
+else
+    python scripts/visualize_results.py "${VIZ_ARGS[@]}"
+fi
+
+if [ -n "$RUN_ID" ]; then
+    DASHBOARD_FILE="$PLOTS_ROOT/runs/$RUN_ID/html/dashboard.html"
+else
+    DASHBOARD_FILE="$(dirname "$TEST_RECORD_DIR")/dashboard.html"
+fi
 
 if [ -f "$DASHBOARD_FILE" ]; then
     DASHBOARD_SIZE=$(du -h "$DASHBOARD_FILE" | cut -f1)
@@ -72,12 +86,7 @@ if [ -f "$DASHBOARD_FILE" ]; then
     echo "Finished: $(date)"
     echo "=================================================="
     echo ""
-    echo "To view the dashboard:"
-    echo "  1. Download the file to your local machine"
-    echo "  2. Open in a web browser"
-    echo ""
-    echo "Or use VSCode to open and preview:"
-    echo "  code $DASHBOARD_FILE"
+    echo "Master plots index: $PLOTS_ROOT/index.html"
     echo "=================================================="
 else
     echo "Error: Dashboard file not created"

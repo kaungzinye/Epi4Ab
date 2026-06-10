@@ -125,12 +125,16 @@ MODEL_DIR=/leonardo_scratch/fast/EUHPC_D29_035/epi4ab/training_phase1/<RUN_TAG>/
 sbatch slurm/inference_phase1_proteinmpnn_regression.sbatch
 ```
 
-2) Create an interactive dashboard:
+2) Create an interactive dashboard (writes to plots hub when `RUN_ID` is set):
 
 ```bash
+export RUN_ID=phase1_<your_tag>
 python scripts/visualize_results.py \
-  --test_record_dir <INFERENCE_OUT_DIR>/<DATE>_<MODEL>/test_record
+  --test_record_dir <INFERENCE_OUT_DIR>/<DATE>_<MODEL>/test_record \
+  --run_id "$RUN_ID" --build-index
 ```
+
+Browse all plots: `/leonardo_scratch/fast/EUHPC_D29_035/epi4ab/plots/index.html` (see [ARTIFACT_LAYOUT.md](ARTIFACT_LAYOUT.md)).
 
 ## Step 4: Phase 2 (next): Seqitope fine-tune
 
@@ -146,6 +150,55 @@ Recommended Phase 2 approach:
    - `target_file=node_label_seqitope.parquet`
    - `target_column=score`
    - `output_activation=sigmoid`
+
+## Optional: Generate Delta-ASA labels (`node_label_dasa.parquet`)
+
+If you want a physically grounded continuous target from structures, you can generate:
+- `nodes_edges/<pdb_id>/node_label_dasa.parquet` (or another name via `OUTPUT_FILE`)
+- columns: `resId, score, asa_alone, asa_complex, delta_asa, delta_asa_clipped`
+
+Definition:
+- `delta_asa = asa_alone - asa_complex`
+- `delta_asa_clipped = max(delta_asa, 0)`
+- `score = minmax(delta_asa_clipped)` per PDB, in `[0,1]`
+
+**ASA backend:** `slurm/generate_labels_dasa.sbatch` sets `ASA_BACKEND` (default `dssp`).
+- `dssp`: needs `mkdssp` on `PATH` or `DSSP_BIN`.
+- `freesasa`: needs `pip install freesasa` in the job venv; no DSSP binary.
+- `biopython_sr`: Shrake–Rupley via BioPython only.
+
+Multi-backend study: `scripts/run_dasa_backend_study.sh` (commands for labels, training seeds, IEDB prior, dashboards). Training presets: `parameters_phase2_dasa_freesasa.txt`, `parameters_phase2_dasa_biopython_sr.txt`.
+
+Absolute `asa_*` values are **not comparable** across backends; `score` is still per-PDB min–max
+normalized the same way. For side-by-side runs, set e.g. `OUTPUT_FILE=node_label_dasa_freesasa.parquet`.
+
+Requirements:
+- metadata CSV with `pdbID`, `pdb`, and `antigen`
+- completed preprocessing output under `OUT_BASE` (needs both `processed_data` and `nodes_edges`)
+
+Run:
+
+```bash
+OUT_BASE=<same OUT_BASE from preprocessing>
+METADATA_FILE=<metadata csv used by preprocess>
+PDB_LIST=$OUT_BASE/gates/fill_edge/metadata.ok.fill_edge.csv
+ASA_BACKEND=dssp DSSP_BIN=mkdssp \
+sbatch slurm/generate_labels_dasa.sbatch
+```
+
+Validate:
+
+```bash
+python scripts/validate_pipeline.py \
+  --metadata "$PDB_LIST" \
+  --nodes_edges_dir "$OUT_BASE/nodes_edges" \
+  --step labels \
+  --target_type seqitope \
+  --target_file node_label_dasa.parquet \
+  --target_column score
+```
+
+Train against Delta-ASA labels (optional): use `parameters_phase2_dasa_regression.txt` (same as Seqitope Phase 2 but `target_file=node_label_dasa.parquet`). PDB-level split: e.g. `TEST_FRACTION=0.2` and `SPLIT_SEED=42` when submitting `slurm/train_phase1_proteinmpnn_regression.sbatch`.
 
 When you have Seqitope labels, do a quick ablation:
 - train from scratch vs initialize from the Phase 1 checkpoint

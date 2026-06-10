@@ -26,6 +26,9 @@ inspect_columns.py
 extract_metadata.py
 format_pdb_info.py
 verify_fix.py
+
+# Keep the main Seqitope proposal tracked
+!EPI4AB_SEQITOPE_PROPOSAL.md
 **/pdb_list
 **/suggestion.py
 
@@ -49,5 +52,26 @@ verify_env_structure.sh
 input/*.csv
 input/*.txt
 !input/.gitkeep
+
+# Plots hub artifacts (live on scratch, never in repo)
+reports/
+**/plots/
+**/*.html
+!docs/**/*.html
+
+# Plot PNGs and eval CSVs generated in-repo by mistake
+**/*_trace.png
+**/train_loss.png
+**/all_scatter.png
+**/scatter_true_vs_pred.png
+**/dasa_runs*.csv
+**/runs_*.csv
+**/lit_eval_*.csv
+**/regression_summary.csv
+
+# Bulk caches and exports
+**/cache/
+CoV-AbDab*.csv
+**/pdbe_cache*/
 
 # SLURM scripts are tracked; ignore only job outputs (logs/ handles most cases)
