@@ -18,6 +18,17 @@ def extract_ab_feature(pdb_fam, fam_dict, fam_columns):
         return fam_list
 
     fam = pdb_fam[0]
+    # Handle missing/NaN or non-string values gracefully
+    try:
+        if pd.isna(fam):
+            return fam_list
+    except Exception:
+        pass
+    if not isinstance(fam, str):
+        return fam_list
+    fam = fam.strip()
+    if len(fam) == 0:
+        return fam_list
     # Direct match
     if fam in fam_dict:
         fam_key = fam_dict[fam]
@@ -157,6 +168,25 @@ def gather_feature(pdb_df, logging):
 
         if missing_any and pdb_id not in logging.error_gather:
             logging.error_gather.append(pdb_id)
+
+        # merge CDR distances (per-residue CDR proximity, optional feature)
+        cdr_dist_path = os.path.join(data_path, 'cdr_distances', 'cdr_dist_result.parquet')
+        cdr_dist_columns = ['min_dist_H1', 'min_dist_H2', 'min_dist_H3',
+                            'min_dist_L1', 'min_dist_L2', 'min_dist_L3']
+        if os.path.exists(cdr_dist_path):
+            try:
+                cdr_dist_dat = pd.read_parquet(cdr_dist_path)
+                cdr_dist_dat['resId'] = cdr_dist_dat['resId'].astype(int)
+                profile_dat = profile_dat.merge(
+                    cdr_dist_dat[['resId'] + cdr_dist_columns], on='resId', how='left')
+                for col in cdr_dist_columns:
+                    profile_dat[col] = profile_dat[col].fillna(100.0)
+            except Exception:
+                for col in cdr_dist_columns:
+                    profile_dat[col] = 100.0
+        else:
+            for col in cdr_dist_columns:
+                profile_dat[col] = 100.0
 
         # merge antibody feature
         vh_fam = filter_pdb['VH_fam'].values

@@ -37,7 +37,26 @@
                 "onehot_vh" : ["VH1", "VH2", "VH3", "VH4", "VH5", "VH6","VH7", "VH8", "VH9", "VH14", "VH_unk"],
                 "onehot_vl" : ["VK1", "VK2", "VK3", "VK4", "VK5", "VK6", "VK8", "VK10", "VK12", "VK13", "VK14", "VK_others",
                                "VLa1", "VLa2", "VLa3", "VLa6", "VLa_others", "VL_unk"]
-            },  
+            },
+            "AA_short": ["A","V","L","I","P","M","F","W","G","S","T","C","N","Q","Y","K","R","H","D","E"],
+            "seq_aa_short": ["PAD","SOS","A","V","L","I","P","M","F","W","G","S","T","C","N","Q","Y","K","R","H","D","E","-"]
+        },
+    "v1.0.3":
+        {
+            "Ag_features":
+            {
+                "continuous" : ["resDepth", "caDepth", "psi", "phi", "omega", "chi", "aac", "cc",
+                                "min_dist_H1", "min_dist_H2", "min_dist_H3",
+                                "min_dist_L1", "min_dist_L2", "min_dist_L3"],
+                "onehot" : ["angleNan", "chiNan"]
+            },
+            "Ab_features":
+            {
+                "continuous" : ["H1_len", "H2_len", "H3_len", "L1_len", "L2_len", "L3_len","H3_score","L1_score"],
+                "onehot_vh" : ["VH1", "VH2", "VH3", "VH4", "VH5", "VH6","VH7", "VH8", "VH9", "VH14", "VH_unk"],
+                "onehot_vl" : ["VK1", "VK2", "VK3", "VK4", "VK5", "VK6", "VK8", "VK10", "VK12", "VK13", "VK14", "VK_others",
+                               "VLa1", "VLa2", "VLa3", "VLa6", "VLa_others", "VL_unk"]
+            },
             "AA_short": ["A","V","L","I","P","M","F","W","G","S","T","C","N","Q","Y","K","R","H","D","E"],
             "seq_aa_short": ["PAD","SOS","A","V","L","I","P","M","F","W","G","S","T","C","N","Q","Y","K","R","H","D","E","-"]
         }

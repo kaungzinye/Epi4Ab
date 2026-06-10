@@ -11,6 +11,27 @@ Phase 1 pipeline:
 2) Generate per-residue regression targets from ProteinMPNN: `proteinmpnn_scores.parquet` per PDB.
 3) Train Epi4Ab with a regression head (`out_label=1`) against ProteinMPNN targets.
 
+Important: Phase 1 predicts raw ProteinMPNN NLL values (not epitope probability).
+So Phase 1 should use `output_activation=identity`.
+
+## What Phase 1 proves (and what it doesn't)
+
+Phase 1 proves:
+- The end-to-end regression pipeline works on your graph inputs (preprocess -> labels -> training -> inference).
+- Residue alignment (`resId`) is consistent across features and regression targets.
+- Training is numerically stable (loss decreases; predictions are not NaN; outputs can be written per residue).
+
+Phase 1 does NOT prove:
+- Epitope prediction accuracy.
+- Biological relationship between ProteinMPNN NLL and antibody binding.
+
+Phase 1 is a de-risking step and (optionally) a representation pretraining step; Phase 2 is the real evaluation.
+
+## Evaluation note (train/test split)
+
+To avoid misleading train-set metrics, Phase 1 should be run with a PDB-level train/test split.
+`slurm/train_phase1_proteinmpnn_regression.sbatch` generates `pdb_list_train.csv` and `pdb_list_test.csv` by default.
+
 ## Environment (Leonardo)
 
 - Module: `python/3.11.7`

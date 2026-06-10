@@ -1,31 +1,21 @@
-# Phase 1 (synthetic calibration): ProteinMPNN per-residue scores
-# - Regression head with sigmoid output in [0,1]
-# - MSE loss
+# Phase 1 scaling WITHOUT AntiBERTy
+# - Enables scaling up PDB count without requiring CDR sequences
+# - Predict raw ProteinMPNN per-residue NLL
 
 model_name=GNNResNet
 model_block=GNNResNetBlock_Cheb
 feature_version=v1.0.2
 
-# Keep structure features
 use_struct
 initial_process_struct_weight=1
 
-# Keep pretrained sequence embeddings (requires HF cache on offline nodes)
 use_pretrained
 pretrained_model=ESM2_t30
 initial_process_pretrained_weight=1
 
-# Keep AntiBERTy (requires antiberty package; no external download)
-use_antiberty
-antiberty_cdr_list=H1 H2 H3 L1 L2 L3
-initial_process_antiberty_weight=1
-
-# MHA
-use_mha_on=seq
-mha_head=4
-mha_num_layers=6
-max_antigen_len=670
-mha_dropout=0.2
+# Disable AntiBERTy (no CDR required)
+# IMPORTANT: also disable MHA, because MHA uses antibody embeddings
+use_mha_on=no
 
 # Graph
 edge_type=dist
@@ -42,7 +32,6 @@ attention_head=5
 dropout_edge_p=0.2
 
 # Training
-# Use a real split: train + internal validation + unseen test list
 train_all=with_validation
 epoch_number=400
 batch_size=44
@@ -57,9 +46,4 @@ loss_function=mse
 target_type=proteinmpnn
 target_file=proteinmpnn_scores.parquet
 target_column=score
-
-# Phase 1 predicts RAW ProteinMPNN NLL (not a probability)
 output_activation=identity
-
-# Optional: freeze GNN early epochs for stability (override in sbatch if needed)
-# freeze_gnn_epochs=0

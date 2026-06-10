@@ -1,40 +1,29 @@
-# Phase 2 (Seqitope): per-residue probability regression in [0,1]
-# - Same 1D regression head as Phase 1
-# - MSE loss, sigmoid output
+# Phase 2 (DASA): Biopython Shrake-Rupley targets with RSA normalization.
+# Generate labels with:
+#   --asa_backend biopython_sr --normalization rsa --output_file node_label_dasa_biopython_sr_rsa.parquet
 
 model_name=GNNResNet
 model_block=GNNResNetBlock_Cheb
 feature_version=v1.0.2
 
-# Structure features
 use_struct
 initial_process_struct_weight=1
 
-# Pretrained sequence embeddings (frozen)
 use_pretrained
 pretrained_model=ESM2_t30
-# Omission of --freeze_pretrained keeps ESM frozen (see parameters_phase2_dasa_regression.txt).
 initial_process_pretrained_weight=1
 
-# AntiBERTy (optional). Enable if cdr_sequence.json exists per PDB.
-# use_antiberty
-# antiberty_cdr_list=H1 H2 H3 L1 L2 L3
-# initial_process_antiberty_weight=1
-
-# MHA (optional conditioning over sequence)
-use_mha_on=seq
+use_mha_on=no
 mha_head=4
 mha_num_layers=6
 max_antigen_len=670
 mha_dropout=0.2
 
-# Graph
 edge_type=dist
 edge_threshold=10
 bias_distance=-0.1
 block_norm=batchnorm
 
-# Model size
 num_layers=8
 drop_out=0.2 0.2 0.0 0.3 0.4 0.3 0.0 0.0
 hidden_channel=128 64 96 128 96 96 32 64
@@ -42,7 +31,6 @@ filter_size=5
 attention_head=5
 dropout_edge_p=0.2
 
-# Training
 train_all=with_validation
 epoch_number=200
 batch_size=44
@@ -51,12 +39,10 @@ learning_rate=0.0001
 weight_decay=0.0016
 momentum=0.9
 
-# Phase 2 target setup (regression)
 out_label=1
 loss_function=mse
 target_type=seqitope
-target_file=node_label_seqitope.parquet
+target_file=node_label_dasa_biopython_sr_rsa.parquet
 target_column=score
 
-# Phase 2 outputs probability-like score
 output_activation=sigmoid

@@ -50,7 +50,7 @@ def initiate_argument():
                         default=10, type=float)
     parser.add_argument('--feature_version',
                         help='Choose version of features',
-                        default='v1.0.1', choices=['v1.0.0', 'v1.0.1', 'v1.0.2'])
+                        default='v1.0.1', choices=['v1.0.0', 'v1.0.1', 'v1.0.2', 'v1.0.3'])
     parser.add_argument('--use_region',
                         help='Using only region near interface',
                         action='store_true')
@@ -242,7 +242,10 @@ def initiate_argument():
     # Loss function
     parser.add_argument('--loss_function', metavar='',
                         help='Select loss function',
-                        default='cross_entropy', type=str, choices=['cross_entropy','mse','hce'])
+                        default='cross_entropy', type=str, choices=['cross_entropy','mse','mse_pearson','hce'])
+    parser.add_argument('--pearson_loss_weight', metavar='',
+                        help='Weight of the per-complex (1 - Pearson) penalty added to MSE when loss_function=mse_pearson',
+                        default=1.0, type=float)
     parser.add_argument('--cross_entropy_weight', metavar='',
                         help='Add weight for cross entropy',
                         default=None, type=float, nargs=3)

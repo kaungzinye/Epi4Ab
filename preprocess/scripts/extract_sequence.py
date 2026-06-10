@@ -24,7 +24,14 @@ def extract_cdr_sequence(pdb_series, output_folder):
     chain_dict = {}
     cdr_name = ['H1_seq','H2_seq','H3_seq','L1_seq','L2_seq','L3_seq']
 
-    chain_dict = {cdr:pdb_series[cdr].values[0] for cdr in cdr_name}
+    # Some metadata sources do not include CDR sequences.
+    # Write empty strings in that case so preprocessing can still run.
+    for cdr in cdr_name:
+        if cdr in pdb_series.columns:
+            val = pdb_series[cdr].values[0]
+            chain_dict[cdr] = '' if pd.isna(val) else str(val)
+        else:
+            chain_dict[cdr] = ''
     with open(os.path.join(output_folder, f'cdr_sequence.json'), 'w') as f:
         json.dump(chain_dict, f)
     

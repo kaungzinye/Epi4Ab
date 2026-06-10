@@ -82,10 +82,18 @@ python scripts/validate_pipeline.py \
 
 Validates label file alignment:
 
+This repository supports two label modes:
+
+1) Legacy classification labels:
 - `node_label_pi.parquet` exists
 - Columns: `resId`, `isInterface`
 - `resId` matches `node_feature.parquet` exactly
-- `isInterface` values in {0, 1, 2}
+
+2) Regression labels (Seqitope / ProteinMPNN):
+- Per-PDB label parquet exists (configured via CLI):
+  - Phase 1: `proteinmpnn_scores.parquet` with `resId, score` (raw NLL)
+  - Phase 2: `node_label_seqitope.parquet` with `resId, score` (score in `[0,1]`)
+- `resId` matches `node_feature.parquet` exactly
 
 ```bash
 python scripts/validate_pipeline.py \
@@ -132,9 +140,12 @@ python scripts/validate_pipeline.py \
 Validates inference results:
 
 - Result files exist for all PDBs
-- Result file format correct (columns: `res_id`, `res_name`, `pred_label`, `prob.`, `score`)
 - Results align with `node_feature.parquet`
-- No unnecessary files required
+
+Output columns depend on mode:
+
+- Legacy classification output: `pred_label`, `prob.`, `score`
+- Regression output: `pred_score` and optionally `true_score`; if sigmoid is used, `pred_prob` may be present
 
 ```bash
 python scripts/validate_pipeline.py \
@@ -246,4 +257,3 @@ The validation runs automatically and reports any issues without stopping the pi
 
 - [Pipeline Documentation](PIPELINE_DOCUMENTATION.md) - Complete pipeline documentation with diagrams
 - [Validation Script](../scripts/validate_pipeline.py) - Full validation implementation
-

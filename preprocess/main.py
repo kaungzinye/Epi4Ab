@@ -14,6 +14,7 @@ from scripts.extract_aac import extract_aac
 from scripts.extract_charge_composition import extract_cc
 from scripts.gather_feature import gather_feature
 from scripts.extract_sequence import extract_sequence
+from scripts.extract_cdr_distances import extract_cdr_distances
 
 data_start_time = datetime.now()
 args = initiate_argument()
@@ -46,6 +47,7 @@ extract_depth(meta_df, logging)
 extract_charge(meta_df, logging)
 extract_aac(meta_df, logging)
 extract_cc(meta_df, logging)
+extract_cdr_distances(meta_df, logging)
 gather_feature(meta_df, logging)
 extract_sequence(meta_df, logging)
 

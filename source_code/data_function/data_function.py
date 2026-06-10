@@ -229,7 +229,7 @@ def read_feature_name(logging):
             if logging.use_struct:
                 logging.feature_columns_number = logging.reserved_columns + len(logging.ab_onehot_vh_columns) + len(logging.ab_onehot_vl_columns)
             
-        elif logging.feature_version == 'v1.0.2':
+        elif logging.feature_version in ('v1.0.2', 'v1.0.3'):
 
             if logging.use_token:
                 token_dim = logging.token_dim * 2 # For vh and vl

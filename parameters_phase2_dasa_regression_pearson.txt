@@ -1,0 +1,60 @@
+# Phase 2 (DASA) + correlation-aware loss.
+# Identical to parameters_phase2_dasa_regression.txt EXCEPT the objective:
+#   loss_function=mse_pearson  -> MSE + pearson_loss_weight * (1 - per-complex Pearson)
+# This optimizes the per-residue *shape* of the prediction within each complex,
+# countering plain MSE's collapse toward the mean (~0.4). A/B against the mse run.
+#
+# Train/test is PDB-level. Use slurm/train_phase1_proteinmpnn_regression.sbatch with e.g.:
+#   TEST_FRACTION=0.2 SPLIT_SEED=42
+# (~80% train / ~20% test; deterministic for the same METADATA_OK and seed.)
+
+model_name=GNNResNet
+model_block=GNNResNetBlock_Cheb
+feature_version=v1.0.2
+
+use_struct
+initial_process_struct_weight=1
+
+use_pretrained
+pretrained_model=ESM2_t30
+# Do not add a bare "freeze_pretrained" line: argparse uses store_false, so that
+# would *disable* freezing and break data loading (x_seq stays a string). Omission
+# leaves pretrained weights frozen (default).
+initial_process_pretrained_weight=1
+
+# Antigen-only baseline for DASA:
+# no AntiBERTy and no antibody-conditioned MHA.
+use_mha_on=no
+mha_head=4
+mha_num_layers=6
+max_antigen_len=670
+mha_dropout=0.2
+
+edge_type=dist
+edge_threshold=10
+bias_distance=-0.1
+block_norm=batchnorm
+
+num_layers=8
+drop_out=0.2 0.2 0.0 0.3 0.4 0.3 0.0 0.0
+hidden_channel=128 64 96 128 96 96 32 64
+filter_size=5
+attention_head=5
+dropout_edge_p=0.2
+
+train_all=with_validation
+epoch_number=200
+batch_size=44
+optimizer_method=adam
+learning_rate=0.0001
+weight_decay=0.0016
+momentum=0.9
+
+out_label=1
+loss_function=mse_pearson
+pearson_loss_weight=1.0
+target_type=seqitope
+target_file=node_label_dasa.parquet
+target_column=score
+
+output_activation=sigmoid

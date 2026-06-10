@@ -346,7 +346,9 @@ model.load_state_dict(torch.load('model.pt', map_location=map_location, weights_
 ```
 {PDB_ID}/
 ├── node_feature.parquet         # 56 columns (missing some upstream features)
-├── node_label_pi.parquet        # Labels
+├── node_label_pi.parquet        # Labels (legacy classification)
+├── proteinmpnn_scores.parquet   # Labels (Phase 1 regression; raw NLL)
+├── node_label_seqitope.parquet  # Labels (Phase 2 regression; score in [0,1])
 ├── edge_index.parquet           # Edge connections
 ├── edge_attribute_dist.parquet  # Distance attributes
 ├── edge_attribute_charge.parquet # Charge attributes
@@ -421,9 +423,8 @@ python generate_visualizer.py --test_record_dir output_inference/.../test_record
 
 ### Current Status
 
-- ✅ Created `scripts/visualize_results.py` on upstream branch
-- ✅ Matches fork's visualization capabilities
-- ✅ Generates both static (matplotlib) and interactive (Plotly) plots
+- ✅ `scripts/visualize_results.py` is now regression-first (Seqitope / ProteinMPNN workflows)
+- ⚠️ The legacy classification dashboard is no longer the primary path
 
 ---
 
@@ -545,4 +546,3 @@ Both implementations have strengths:
 - For production HPC use: **Fork implementation**
 - For research/development: **Upstream implementation** (with adaptations)
 - For best results: **Hybrid approach** combining strengths of both
-

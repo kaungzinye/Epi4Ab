@@ -171,7 +171,7 @@ def test_model(modelBuild, testData, testList, logging, testType:str='train', fo
                 print(f"Calling record_test_pdb for {pdb} in {fold_folder}")
                 record_test_pdb(data, pred_y, soft_y, data.res_short, pdb, fold_folder, logging.plot_network, logging.networkx_seed)
       
-    elif logging.loss_function == 'mse':
+    elif logging.loss_function in ['mse','mse_pearson']:
         for pdb, data in tqdm_enum:
             result = prediction_test(data, modelBuild, logging.device)
             pred_score = result.reshape(-1)

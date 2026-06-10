@@ -23,7 +23,8 @@ class TrainModel:
                  momentum=None,
                  lr_pretrain=None,
                  lr_finetune=None,
-                 freeze_gnn_epochs=0):
+                 freeze_gnn_epochs=0,
+                 pearson_loss_weight=1.0):
         self.modelBuild = None
         self.optimizer = None
         self.batch_size = batch_size
@@ -40,7 +41,8 @@ class TrainModel:
         self.loss_function_name = loss_function
         self.loss_function = get_loss_function(loss_function, 
                                                cross_entropy_weight,
-                                               device).to(self.device)
+                                               device,
+                                               pearson_loss_weight=pearson_loss_weight).to(self.device)
 
     def set_model(self, modelBuild, optimizer):
         self.modelBuild = modelBuild
@@ -68,7 +70,10 @@ class TrainModel:
         out = self.modelBuild(data.x, data.x_seq, data.edge_index, data.edge_attr, data.x_ab, 
                               data.ab_padding_mask,data.feature_token, data.node_size)
         assert out.shape[0] == data.y.shape[0], f'Model output and Ground truth have mismatch shape {out.shape} vs. {data.y.shape}, PDBs in batch: {data.pdb_id}'
-        loss = self.loss_function(out, data.y)
+        if self.loss_function_name == 'mse_pearson':
+            loss = self.loss_function(out, data.y, getattr(data, 'batch', None))
+        else:
+            loss = self.loss_function(out, data.y)
         assert not loss.isnan().any(), f'There is NaN value after loss function {loss}'
         item_loss = [loss.item()]
         del out
@@ -177,7 +182,8 @@ def process_training(train_data_raw, train_list_raw, logging, relaxed_train_data
                             momentum=logging.momentum,
                             lr_pretrain=logging.lr_pretrain,
                             lr_finetune=logging.lr_finetune,
-                            freeze_gnn_epochs=logging.freeze_gnn_epochs)
+                            freeze_gnn_epochs=logging.freeze_gnn_epochs,
+                            pearson_loss_weight=logging.pearson_loss_weight)
     if logging.train_all in ['yes','with_validation']:
         model = choose_model(logging).to(logging.device)
         optimizer_lr = logging.lr_pretrain if logging.freeze_gnn_epochs and logging.freeze_gnn_epochs > 0 else logging.learning_rate

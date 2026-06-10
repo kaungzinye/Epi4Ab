@@ -20,6 +20,7 @@ import pandas as pd
 from pathlib import Path
 from tqdm import tqdm
 from Bio.PDB.PDBList import PDBList
+from urllib.request import urlretrieve
 
 # Add project root to path
 PROJ_ROOT = Path(__file__).parent.parent
@@ -79,7 +80,7 @@ def download_pdb_files(pdb_info_path, output_base_dir):
     pdb_df = pd.read_csv(pdb_info_path)
     print(f"Found {len(pdb_df)} PDB entries")
     
-    # Initialize PDB downloader
+    # Initialize PDB downloader (FTP-style; may fail on some systems)
     pdb_downloader = PDBList(verbose=False)
     
     # Track errors
@@ -103,24 +104,46 @@ def download_pdb_files(pdb_info_path, output_base_dir):
             continue
         
         try:
-            # Download PDB file as mmCIF format
+            # Attempt 1: BioPython (may write a differently named file)
             pdb_downloader.retrieve_pdb_file(
                 pdb_code,
                 pdir=pdb_dir,
                 file_format='mmCif'
             )
-            
-            # Verify download
-            if os.path.exists(cif_file):
-                downloaded.append(pdb_id)
-                print(f"✓ Downloaded {pdb_id} -> {cif_file}")
-            else:
+        except Exception:
+            # Ignore and fall back to HTTPS below.
+            pass
+
+        # BioPython may save as 'pdb{code}.cif' or similar; normalize to '{code}.cif'
+        if not os.path.exists(cif_file):
+            candidates = [
+                os.path.join(pdb_dir, f'pdb{pdb_code}.cif'),
+                os.path.join(pdb_dir, f'{pdb_code}.cif'),
+                os.path.join(pdb_dir, f'pdb{pdb_code}.cif.gz'),
+                os.path.join(pdb_dir, f'{pdb_code}.cif.gz'),
+            ]
+            for cand in candidates:
+                if os.path.exists(cand):
+                    # If gz, leave it as-is; preprocessing expects .cif, so user should decompress.
+                    if cand.endswith('.cif'):
+                        os.replace(cand, cif_file)
+                    break
+
+        # Attempt 2: direct HTTPS download from RCSB (preferred)
+        if not os.path.exists(cif_file):
+            url = f'https://files.rcsb.org/download/{pdb_code.upper()}.cif'
+            try:
+                urlretrieve(url, cif_file)
+            except Exception as e:
                 errors.append(pdb_id)
-                print(f"✗ Failed to download {pdb_id}: file not found after download")
-                
-        except Exception as e:
+                print(f"✗ Failed to download {pdb_id} from {url}: {e}")
+                continue
+
+        if os.path.exists(cif_file):
+            downloaded.append(pdb_id)
+        else:
             errors.append(pdb_id)
-            print(f"✗ Error downloading {pdb_id}: {e}")
+            print(f"✗ Failed to download {pdb_id}: file not found after download")
     
     # Summary
     print("\n" + "="*60)
@@ -165,16 +188,24 @@ def main():
             print("Aborted.")
             sys.exit(1)
     
-    # Load environment variables
-    try:
-        env = load_env_vars()
-    except Exception as e:
-        print(f"Error loading .env file: {e}")
-        sys.exit(1)
-    
-    # Get paths from environment
-    pdb_info_path = env.get('DIRECTORY_PDB_INFO')
-    processed_dir = env.get('DIRECTORY_PROCESSED')
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--pdb_info_path', default='', help='CSV with columns pdbID and pdb')
+    ap.add_argument('--processed_dir', default='', help='Output base directory for downloaded CIFs')
+    args = ap.parse_args()
+
+    pdb_info_path = args.pdb_info_path
+    processed_dir = args.processed_dir
+
+    if not pdb_info_path or not processed_dir:
+        # Backward compatible: fall back to .env
+        try:
+            env = load_env_vars()
+        except Exception as e:
+            print(f"Error loading .env file: {e}")
+            sys.exit(1)
+        pdb_info_path = pdb_info_path or env.get('DIRECTORY_PDB_INFO')
+        processed_dir = processed_dir or env.get('DIRECTORY_PROCESSED')
     
     if not pdb_info_path:
         print("ERROR: DIRECTORY_PDB_INFO not set in .env file")
@@ -210,4 +241,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

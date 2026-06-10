@@ -23,6 +23,12 @@ NLP embeddings:
 - `fair-esm==2.0.0` (ESM models)
 - `antiberty==0.1.3`
 
+Notes:
+- "ProtBERT" is not a separate pip dependency. In this codebase it is loaded via Transformers:
+  - `BertTokenizer.from_pretrained("Rostlab/prot_bert")`
+  - `BertModel.from_pretrained("Rostlab/prot_bert")`
+  so the dependency is still `transformers` (plus its normal sub-deps like `tokenizers`).
+
 Plotting (optional for training/inference, required for dashboards):
 - `matplotlib==3.7.5`
 - `seaborn==0.13.2`

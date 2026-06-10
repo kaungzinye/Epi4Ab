@@ -8,6 +8,63 @@ class CustomMSELoss(nn.MSELoss):
     
     def forward(self, input: torch.tensor, target: torch.Tensor) -> torch.tensor:
         return F.mse_loss(input.reshape(-1), target.float())
+
+class MSEPearsonLoss(nn.Module):
+    """MSE plus a per-complex correlation penalty.
+
+        loss = mse + pearson_weight * (1 - mean_g Pearson_g(pred, target))
+
+    The Pearson term is computed within each complex (graph) using the batch
+    assignment vector, so it optimizes the *shape/ranking* of predictions per
+    complex. Plain MSE on per-complex min-max targets is minimized by predicting
+    the conditional mean, which collapses predictions toward ~0.4; adding the
+    correlation term forces the model to track relative burial across residues.
+    A single graph (batch=None, used at validation) is treated as one complex.
+    Graphs with fewer than two residues or a flat target are skipped because
+    Pearson is undefined there.
+    """
+    def __init__(self, pearson_weight: float = 1.0, eps: float = 1e-8):
+        super().__init__()
+        self.pearson_weight = pearson_weight
+        self.eps = eps
+
+    def _pearson(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        pred_c = pred - pred.mean()
+        target_c = target - target.mean()
+        denom = (torch.sqrt((pred_c * pred_c).sum() + self.eps)
+                 * torch.sqrt((target_c * target_c).sum() + self.eps))
+        return (pred_c * target_c).sum() / denom
+
+    def _is_flat(self, vals: torch.Tensor) -> bool:
+        return bool((vals - vals.mean()).abs().sum() < self.eps)
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor, batch: torch.Tensor = None) -> torch.Tensor:
+        pred = input.reshape(-1)
+        tgt = target.float().reshape(-1)
+        mse = F.mse_loss(pred, tgt)
+        if self.pearson_weight == 0:
+            return mse
+        if batch is None:
+            if pred.numel() < 2 or self._is_flat(tgt):
+                corr_term = pred.new_zeros(())
+            else:
+                corr_term = 1.0 - self._pearson(pred, tgt)
+        else:
+            num_graphs = int(batch.max().item()) + 1
+            corrs = []
+            for g in range(num_graphs):
+                mask = batch == g
+                if int(mask.sum()) < 2:
+                    continue
+                t = tgt[mask]
+                if self._is_flat(t):
+                    continue
+                corrs.append(self._pearson(pred[mask], t))
+            if len(corrs) == 0:
+                corr_term = pred.new_zeros(())
+            else:
+                corr_term = 1.0 - torch.stack(corrs).mean()
+        return mse + self.pearson_weight * corr_term
     
 class HierarchicalCELoss(nn.Module):
     def __init__(self, cross_entropy_weight, device):
@@ -55,7 +112,8 @@ class HierarchicalCELoss(nn.Module):
     
 def get_loss_function(loss_function, 
                       cross_entropy_weight,
-                      device):
+                      device,
+                      pearson_loss_weight=1.0):
     if loss_function == 'cross_entropy': 
         if cross_entropy_weight:
             return nn.CrossEntropyLoss(weight=torch.tensor(cross_entropy_weight))
@@ -63,6 +121,8 @@ def get_loss_function(loss_function,
             return nn.CrossEntropyLoss()
     elif loss_function == 'mse':
         return CustomMSELoss()
+    elif loss_function == 'mse_pearson':
+        return MSEPearsonLoss(pearson_weight=pearson_loss_weight)
     elif loss_function == 'hce':
         return HierarchicalCELoss(cross_entropy_weight, device)
     

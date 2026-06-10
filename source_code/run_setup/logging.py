@@ -115,7 +115,7 @@ class ModelLogging:
         self.model_architecture = None
         self.in_feature = 0
         self.hidden_channel = args.hidden_channel
-        if args.loss_function == 'mse':
+        if args.loss_function in ['mse','mse_pearson']:
             self.out_label = 1
         else:
             self.out_label = args.out_label
@@ -139,8 +139,9 @@ class ModelLogging:
         self.block_norm_momentum = args.block_norm_momentum
         # Loss function
         self.loss_function = args.loss_function
+        self.pearson_loss_weight = args.pearson_loss_weight
         if self.target_type in ['seqitope','proteinmpnn']:
-            assert self.loss_function == 'mse', f'Target type "{self.target_type}" requires loss_function="mse"'
+            assert self.loss_function in ['mse','mse_pearson'], f'Target type "{self.target_type}" requires loss_function="mse" or "mse_pearson"'
         if args.cross_entropy_weight is not None:
             assert len(args.cross_entropy_weight) == args.out_label, f'Number of Cross entropy weight ({args.cross_entropy_weight}) and number of out label ({args.out_label}) should be equal.'
         self.cross_entropy_weight = args.cross_entropy_weight
@@ -174,7 +175,7 @@ class ModelLogging:
             self.evaluation_columns = ["Global Score Percent", "Local Score Percent", "Cosine Similarity", "Pairwise Score Percent"]
         else:
             self.evaluation_columns = ["Recall","Precision","f1","Accuracy","ROC AUC","Average Precision"]
-        if self.loss_function == 'mse':
+        if self.loss_function in ['mse','mse_pearson']:
             self.evaluation_columns = ["MSE"]
         # GPU
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -260,7 +261,7 @@ Code version: {self.code_version}
 | Pre-trained feed forward output | {self.seq_ff_out} |
 | pre-trained feed forward dropout | {self.seq_ff_dropout} |'''
 
-        if self.loss_function == 'mse':
+        if self.loss_function in ['mse','mse_pearson']:
             message += f'''
 | Label | Continuous |'''
         else:
@@ -343,9 +344,12 @@ Code version: {self.code_version}
 | Variable | Value |
 | --- | --- |
 | Loss function | {self.loss_function} |'''
-        if self.loss_function == 'mse':
+        if self.loss_function in ['mse','mse_pearson']:
             message += f'''
 | Threshold of MSE | {self.mse_threshold} |'''
+            if self.loss_function == 'mse_pearson':
+                message += f'''
+| Pearson loss weight | {self.pearson_loss_weight} |'''
         elif self.loss_function == 'cross_entropy':
             message += f'''
 | Weight of cross entropy | {self.cross_entropy_weight} |'''

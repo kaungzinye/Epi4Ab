@@ -47,6 +47,7 @@ def process_data(logging):
     else:
         pretrained_tokenize = None
         pretrained_model = None
+    ab_pretrained_model = None
     if logging.use_antiberty:
         from antiberty import AntiBERTyRunner
         ab_pretrained_model = AntiBERTyRunner()
