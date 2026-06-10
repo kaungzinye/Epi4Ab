@@ -7,6 +7,7 @@ Last updated: 2026-06
 1. [docs/PIPELINE_QUICKSTART.md](docs/PIPELINE_QUICKSTART.md) — preprocess → Phase 1 → optional DASA
 2. [docs/ARTIFACT_LAYOUT.md](docs/ARTIFACT_LAYOUT.md) — plots hub on scratch (`epi4ab/plots/index.html`)
 3. [docs/STORAGE_AND_DRIVES.md](docs/STORAGE_AND_DRIVES.md) — Leonardo work vs scratch vs archive
+4. [docs/LOCAL_BACKUP.md](docs/LOCAL_BACKUP.md) — bundle training data + plots for your hard drive
 4. [docs/DASA_EVAL_AND_VIZ.md](docs/DASA_EVAL_AND_VIZ.md) — which visualization script to run
 
 **Legacy classification pipeline** (`node_label_pi.parquet`, `isInterface` 0/1/2): see [docs/LEGACY_CLASSIFICATION_PIPELINE.md](docs/LEGACY_CLASSIFICATION_PIPELINE.md).

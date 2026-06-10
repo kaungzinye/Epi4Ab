@@ -41,6 +41,15 @@ bash scripts/export_heavy_to_large.sh --apply --label 20260610
 
 Plots are **not** deleted — they live under `epi4ab/plots/` before archiving training dirs.
 
+## Local hard drive backup
+
+Training data and preprocess outputs are **not** in git. To copy them to your laptop:
+
+1. On Leonardo: `bash scripts/export_portable_bundles.sh --apply --include-phase1`
+2. On laptop: `rsync` from `epi4ab/portable_bundles/<date>/`
+
+Full steps: [LOCAL_BACKUP.md](LOCAL_BACKUP.md).
+
 ## Never commit
 
 - `reports/` under the repo
